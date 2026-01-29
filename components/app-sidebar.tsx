@@ -79,7 +79,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="p-2">
         <SidebarMenu>
-          <Collapsible asChild className="group/collapsible">
+          <Collapsible asChild className="group/collapsible" defaultOpen>
             <SidebarMenuItem>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton tooltip={"Tests"}>

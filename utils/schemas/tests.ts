@@ -1,5 +1,6 @@
-import { TestCase, TestSuite } from "@/prisma/client";
+import { Context, TestCase, TestSuite } from "@/prisma/client";
 import z from "zod";
+import { contextSerializer } from "./context";
 
 export function testCaseSerializer(testCase: TestCase) {
   return {
@@ -16,7 +17,7 @@ export function testCaseSerializer(testCase: TestCase) {
 export type TestCaseSerialized = ReturnType<typeof testCaseSerializer>;
 
 export function testSuiteSerializer(
-  suite: TestSuite & { testCases: TestCase[] },
+  suite: TestSuite & { testCases: TestCase[]; contexts: Context[] },
 ) {
   return {
     id: suite.id,
@@ -24,6 +25,7 @@ export function testSuiteSerializer(
     createdAt: suite.createdAt,
     updatedAt: suite.updatedAt,
     testCases: suite.testCases.map(testCaseSerializer),
+    contexts: suite.contexts.map(contextSerializer),
   };
 }
 
@@ -34,6 +36,12 @@ export const testSuiteCreateSchema = z.object({
 });
 
 export type TestSuiteCreatePayload = z.infer<typeof testSuiteCreateSchema>;
+
+export const testSuiteUpdateSchema = testSuiteCreateSchema.extend({
+  contextIds: z.array(z.cuid()),
+});
+
+export type TestSuiteUpdatePayload = z.infer<typeof testSuiteUpdateSchema>;
 
 export const testCaseCreateSchema = z
   .object({

@@ -6,6 +6,7 @@ export async function getServerSuite(id: string) {
     where: { id },
     include: {
       testCases: true,
+      contexts: true,
     },
   });
 
