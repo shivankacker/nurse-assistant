@@ -21,14 +21,16 @@ model TestSuite {
 }
 
 model TestCase {
-  id             String          @id @default(cuid())
-  question       String
-  expectedAnswer String
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  testSuite      TestSuite       @relation(fields: [testSuiteId], references: [id])
-  testSuiteId    String
-  testRunResults TestRunResult[]
+  id                String          @id @default(cuid())
+  questionText      String?
+  questionAudioPath String?
+  questionImagePath String?
+  expectedAnswer    String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  testSuite         TestSuite       @relation(fields: [testSuiteId], references: [id])
+  testSuiteId       String
+  testRunResults    TestRunResult[]
 }
 
 model TestContext {

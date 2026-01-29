@@ -30,6 +30,9 @@ export async function POST(request: NextRequest) {
     data: {
       name: parsedBody.data.name,
     },
+    include: {
+      testCases: true,
+    },
   });
 
   return NextResponse.json(testSuiteSerializer(newSuite), { status: 201 });
