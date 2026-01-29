@@ -16,6 +16,12 @@
  * 4. Calculate scores (BLEU, Cosine, LLM-as-judge)
  * 5. Save results and update status
  */
+
+// Load environment variables from .env and .env.local
+import { config } from "dotenv";
+config({ path: ".env" });
+config({ path: ".env.local", override: true });
+
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
 import { processTestRun } from "./worker";

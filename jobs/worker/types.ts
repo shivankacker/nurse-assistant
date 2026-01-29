@@ -63,7 +63,7 @@ export type ScoreResult = {
 };
 
 // Status for individual test run results
-export type TestRunResultStatus = "PENDING" | "RUNNNING" | "COMPLETED" | "FAILED";
+export type TestRunResultStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
 
 // Data shape for creating a TestRunResult
 export type TestRunResultInput = {
