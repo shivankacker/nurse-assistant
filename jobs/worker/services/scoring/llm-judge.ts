@@ -10,7 +10,8 @@
  * - Relevance
  * - Coherence
  */
-import { generateText } from "ai";
+import { generateObject } from "ai";
+import { z } from "zod";
 import { parseModelString, getModel } from "../llm";
 
 export type LlmJudgeResult = {
@@ -19,8 +20,21 @@ export type LlmJudgeResult = {
 };
 
 /**
- * Judge prompt template
- * Designed to produce consistent, structured evaluations
+ * Zod schema for structured LLM judge response
+ */
+const llmJudgeResponseSchema = z.object({
+  score: z.number().min(0).max(1).describe("Overall score between 0.0 and 1.0"),
+  breakdown: z.object({
+    accuracy: z.number().min(0).max(1).describe("Factual accuracy score 0.0-1.0"),
+    completeness: z.number().min(0).max(1).describe("Completeness score 0.0-1.0"),
+    relevance: z.number().min(0).max(1).describe("Relevance score 0.0-1.0"),
+    coherence: z.number().min(0).max(1).describe("Coherence score 0.0-1.0"),
+  }).describe("Breakdown of scores by criteria"),
+  reason: z.string().describe("2-3 sentence explanation of the score"),
+});
+
+/**
+ * Judge prompt template (without JSON format instructions - handled by structured output)
  */
 const JUDGE_PROMPT = `You are an expert evaluator assessing the quality of AI-generated answers.
 
@@ -49,18 +63,6 @@ GENERATED ANSWER:
 
 ---
 
-Provide your evaluation in the following JSON format ONLY (no other text):
-{
-  "score": <number between 0.0 and 1.0>,
-  "breakdown": {
-    "accuracy": <0.0-1.0>,
-    "completeness": <0.0-1.0>,
-    "relevance": <0.0-1.0>,
-    "coherence": <0.0-1.0>
-  },
-  "reason": "<2-3 sentence explanation of the score>"
-}
-
 Scoring guide:
 - 0.9-1.0: Excellent - Nearly identical or better than expected
 - 0.7-0.9: Good - Covers main points with minor gaps
@@ -69,7 +71,7 @@ Scoring guide:
 - 0.0-0.3: Very Poor - Mostly incorrect or irrelevant`;
 
 /**
- * Calculate LLM-as-judge score
+ * Calculate LLM-as-judge score using structured output
  *
  * @param question - The original question
  * @param generatedAnswer - The LLM's generated answer
@@ -97,15 +99,23 @@ export async function calculateLlmJudgeScore(
       .replace("{expectedAnswer}", expectedAnswer)
       .replace("{generatedAnswer}", generatedAnswer);
 
-    // Generate evaluation
-    const { text } = await generateText({
+    // Generate structured evaluation using Zod schema
+    const { object } = await generateObject({
       model,
+      schema: llmJudgeResponseSchema,
       prompt,
       temperature: 0.1, // Low temperature for consistent evaluation
     });
 
-    // Parse the JSON response
-    return parseJudgeResponse(text);
+    // Clamp score to valid range (extra safety)
+    const score = Math.max(0, Math.min(1, object.score));
+
+    console.log(`[LLM-Judge] Score: ${score.toFixed(2)}`);
+
+    return {
+      score,
+      reason: object.reason,
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[LLM-Judge] Evaluation failed: ${errorMessage}`);
@@ -116,93 +126,6 @@ export async function calculateLlmJudgeScore(
       reason: `Evaluation failed: ${errorMessage}. Defaulting to neutral score.`,
     };
   }
-}
-
-/**
- * Parse the LLM judge response
- * Handles various response formats and edge cases
- */
-function parseJudgeResponse(text: string): LlmJudgeResult {
-  try {
-    // Try to extract JSON from the response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      console.warn("[LLM-Judge] No JSON found in response, extracting manually");
-      return extractScoreFromText(text);
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    // Validate and extract score
-    let score = parsed.score;
-
-    // Handle various score formats
-    if (typeof score === "string") {
-      score = parseFloat(score);
-    }
-
-    if (typeof score !== "number" || isNaN(score)) {
-      // Try to extract from breakdown if available
-      if (parsed.breakdown) {
-        const values = Object.values(parsed.breakdown).filter(
-          (v): v is number => typeof v === "number"
-        );
-        if (values.length > 0) {
-          score = values.reduce((a, b) => a + b, 0) / values.length;
-        } else {
-          score = 0.5;
-        }
-      } else {
-        score = 0.5;
-      }
-    }
-
-    // Clamp score to valid range
-    score = Math.max(0, Math.min(1, score));
-
-    // Extract reason
-    const reason = parsed.reason || parsed.explanation || "No explanation provided";
-
-    console.log(`[LLM-Judge] Score: ${score.toFixed(2)}`);
-
-    return { score, reason };
-  } catch (error) {
-    console.warn(`[LLM-Judge] Failed to parse JSON: ${error}`);
-    return extractScoreFromText(text);
-  }
-}
-
-/**
- * Extract score from plain text if JSON parsing fails
- */
-function extractScoreFromText(text: string): LlmJudgeResult {
-  // Try to find a score pattern in the text
-  const scorePatterns = [
-    /score[:\s]+([0-9.]+)/i,
-    /([0-9.]+)\s*\/\s*1/i,
-    /([0-9.]+)\s*out of\s*1/i,
-    /rating[:\s]+([0-9.]+)/i,
-  ];
-
-  for (const pattern of scorePatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      const score = parseFloat(match[1]);
-      if (!isNaN(score) && score >= 0 && score <= 1) {
-        return {
-          score,
-          reason: text.slice(0, 200), // Use first 200 chars as reason
-        };
-      }
-    }
-  }
-
-  // Default fallback
-  return {
-    score: 0.5,
-    reason: `Could not parse evaluation. Response: ${text.slice(0, 200)}`,
-  };
 }
 
 /**
