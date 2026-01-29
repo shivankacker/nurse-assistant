@@ -46,6 +46,7 @@ model Context {
 enum TEST_RUN_STATUS {
   PENDING
   RUNNNING
+  SCORING
   COMPLETED
   FAILED
 }
@@ -73,10 +74,12 @@ model TestRunResult {
   testCase       TestCase        @relation(fields: [caseId], references: [id])
   status         TEST_RUN_STATUS @default(PENDING)
   failReason     String?
-  answer         String
-  bleuScore      Float
-  cosineSimScore Float
-  llmScore       Float
-  llmScoreReason String
+  answer         String?
+  bleuScore      Float?
+  cosineSimScore Float?
+  llmScore       Float?
+  llmScoreReason String?
   createdAt      DateTime        @default(now())
+  answeredAt     DateTime?
+  scoredAt       DateTime?
 }
