@@ -5,6 +5,7 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -12,16 +13,28 @@ import {
 import { API } from "@/utils/api";
 import { getNextPageParam } from "@/utils/query-utils";
 import { PaginatedResponse } from "@/utils/schemas/base";
-import { TestSuiteSerialized } from "@/utils/schemas/tests";
+import {
+  TestSuiteCreatePayload,
+  testSuiteCreateSchema,
+  TestSuiteSerialized,
+} from "@/utils/schemas/tests";
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { useForm } from "@tanstack/react-form";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 
 export default function Client(props: {
   suites: PaginatedResponse<TestSuiteSerialized>;
 }) {
   const { suites } = props;
-
-  const [newSuiteName, setNewSuiteName] = useState("");
 
   const suitesQuery = useInfiniteQuery({
     queryKey: ["suites"],
@@ -33,7 +46,23 @@ export default function Client(props: {
   });
 
   const createSuiteMutation = useMutation({
-    mutationFn: () => API.tests.suites.create({ name: newSuiteName }),
+    mutationFn: (data: TestSuiteCreatePayload) => API.tests.suites.create(data),
+    onSuccess: () => {
+      toast.success("Test suite created successfully");
+      suitesQuery.refetch();
+    },
+  });
+
+  const form = useForm({
+    defaultValues: {
+      name: "",
+    },
+    validators: {
+      onSubmit: testSuiteCreateSchema,
+    },
+    onSubmit: async ({ value }) => {
+      createSuiteMutation.mutate(value);
+    },
   });
 
   return (
@@ -50,6 +79,44 @@ export default function Client(props: {
               Enter the name for the new test suite.
             </SheetDescription>
           </SheetHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              form.handleSubmit();
+            }}
+          >
+            <FieldGroup className="px-4">
+              <form.Field
+                name="name"
+                children={(field) => {
+                  const isInvalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid;
+                  return (
+                    <Field data-invalid={isInvalid}>
+                      <FieldLabel htmlFor={field.name}>Name</FieldLabel>
+                      <Input
+                        id={field.name}
+                        name={field.name}
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        aria-invalid={isInvalid}
+                        placeholder="Enter test suite name"
+                        autoComplete="off"
+                      />
+                      {isInvalid && (
+                        <FieldError errors={field.state.meta.errors} />
+                      )}
+                    </Field>
+                  );
+                }}
+              />
+            </FieldGroup>
+
+            <SheetFooter>
+              <Button type="submit">Submit</Button>
+            </SheetFooter>
+          </form>
         </SheetContent>
       </Sheet>
     </div>
