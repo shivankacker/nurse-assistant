@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import type { z } from "zod";
 import { zodErrorSerializer } from "./schemas/base";
 
-function __parseData<T extends z.ZodObject<any>>(data: any, schema: T) {
+function __parseData<T extends z.ZodTypeAny>(data: any, schema: T) {
   const parsedFilters = schema.safeParse(data);
 
   if (!parsedFilters.success) {
@@ -19,7 +19,7 @@ function __parseData<T extends z.ZodObject<any>>(data: any, schema: T) {
     errors: null,
   };
 }
-export function parseQueryParams<T extends z.ZodObject<any>>(
+export function parseQueryParams<T extends z.ZodTypeAny>(
   request: NextRequest,
   schema: T,
 ) {
@@ -30,7 +30,7 @@ export function parseQueryParams<T extends z.ZodObject<any>>(
   return __parseData(queryParams, schema);
 }
 
-export async function parseBody<T extends z.ZodObject<any>>(
+export async function parseBody<T extends z.ZodTypeAny>(
   request: NextRequest,
   schema: T,
 ) {

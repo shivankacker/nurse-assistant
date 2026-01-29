@@ -13,6 +13,8 @@ export function testCaseSerializer(testCase: TestCase) {
   };
 }
 
+export type TestCaseSerialized = ReturnType<typeof testCaseSerializer>;
+
 export function testSuiteSerializer(
   suite: TestSuite & { testCases: TestCase[] },
 ) {
@@ -32,3 +34,17 @@ export const testSuiteCreateSchema = z.object({
 });
 
 export type TestSuiteCreatePayload = z.infer<typeof testSuiteCreateSchema>;
+
+export const testCaseCreateSchema = z
+  .object({
+    expectedAnswer: z.string().min(1),
+  })
+  .and(
+    z.union([
+      z.object({ questionText: z.string().min(1) }),
+      z.object({ questionAudioPath: z.string().min(1) }),
+      z.object({ questionImagePath: z.string().min(1) }),
+    ]),
+  );
+
+export type TestCaseCreatePayload = z.infer<typeof testCaseCreateSchema>;

@@ -29,6 +29,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { ModeToggle } from "./theme-toggle";
+import Link from "next/link";
 
 // This is sample data.
 const data = {
@@ -69,31 +70,13 @@ const data = {
           title: "Runs",
           url: "/tests/runs",
         },
-        {
-          title: "Context",
-          url: "/tests/context",
-        },
       ],
     },
-    // {
-    //   title: "Models",
-    //   url: "#",
-    //   icon: Bot,
-    //   items: [
-    //     {
-    //       title: "Genesis",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Explorer",
-    //       url: "#",
-    //     },
-    //     {
-    //       title: "Quantum",
-    //       url: "#",
-    //     },
-    //   ],
-    // },
+    {
+      title: "Context",
+      url: "/context",
+      icon: Bot,
+    },
     // {
     //   title: "Documentation",
     //   url: "#",
@@ -170,10 +153,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <a href="/">
+              <Link href="/">
                 {/* <IconInnerShadowTop className="size-5!" /> */}
                 <span className="text-base font-semibold">Nurse Assistant</span>
-              </a>
+              </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

@@ -1,3 +1,4 @@
+import { contextApi } from "./context";
 import { testApi } from "./tests";
 
 type endpoint = `/${string}`;
@@ -102,4 +103,5 @@ export const request = async <T = any>(
 
 export const API = {
   tests: testApi,
+  context: contextApi,
 };
