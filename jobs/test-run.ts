@@ -9,16 +9,16 @@ const connection = new IORedis(process.env.REDIS_URL || "", {
 const worker = new Worker(
   "test-run",
   async (job) => {
-    const data = job.data as { suiteId: string };
-    const suite = await prisma.testSuite.findUnique({
-      where: { id: data.suiteId },
+    const data = job.data as { testRunId: string };
+    const testRun = await prisma.testRun.findUnique({
+      where: { id: data.testRunId },
     });
 
-    if (!suite) {
-      throw new Error("Test suite not found");
+    if (!testRun) {
+      throw new Error("Test run not found");
     }
-    // run the test suite here
-    console.log(suite);
+    // run the test run here
+    console.log(testRun);
   },
   { connection },
 );
