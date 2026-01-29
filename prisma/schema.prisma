@@ -1,0 +1,79 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "./client"
+  runtime       = "nodejs"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TestSuite {
+  id        String        @id @default(cuid())
+  name      String
+  contexts  TestContext[]
+  testCases TestCase[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  testRuns  TestRun[]
+}
+
+model TestCase {
+  id             String          @id @default(cuid())
+  question       String
+  expectedAnswer String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  testSuite      TestSuite       @relation(fields: [testSuiteId], references: [id])
+  testSuiteId    String
+  testRunResults TestRunResult[]
+}
+
+model TestContext {
+  id         String      @id @default(cuid())
+  text       String?
+  filePath   String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  testSuites TestSuite[]
+}
+
+enum TEST_RUN_STATUS {
+  PENDING
+  RUNNNING
+  COMPLETED
+  FAILED
+}
+
+model TestRun {
+  id             String          @id @default(cuid())
+  suiteId        String
+  suite          TestSuite       @relation(fields: [suiteId], references: [id])
+  llmModel       String
+  topP           Float
+  topK           Int
+  temperature    Float
+  prompt         String
+  status         TEST_RUN_STATUS @default(PENDING)
+  failReason     String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  completedAt    DateTime?
+  testRunResults TestRunResult[]
+}
+
+model TestRunResult {
+  id             String   @id @default(cuid())
+  runId          String
+  testRun        TestRun  @relation(fields: [runId], references: [id])
+  caseId         String
+  testCase       TestCase @relation(fields: [caseId], references: [id])
+  answer         String
+  bleuScore      Float
+  cosineSimScore Float
+  llmScore       Float
+  llmScoreReason String
+  createdAt      DateTime @default(now())
+}
