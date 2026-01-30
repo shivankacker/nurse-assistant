@@ -88,11 +88,13 @@ export type TestRunSerialized = ReturnType<typeof testRunSerializer>;
 
 export const testSuiteCreateSchema = z.object({
   name: z.string().min(1).max(255),
+  contextIds: z.array(z.cuid()).optional(),
 });
 
 export type TestSuiteCreatePayload = z.infer<typeof testSuiteCreateSchema>;
 
-export const testSuiteUpdateSchema = testSuiteCreateSchema.extend({
+export const testSuiteUpdateSchema = z.object({
+  name: z.string().min(1).max(255),
   contextIds: z.array(z.cuid()),
 });
 

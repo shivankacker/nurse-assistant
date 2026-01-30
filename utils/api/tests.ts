@@ -24,6 +24,7 @@ export const testApi = {
       request<TestSuiteSerialized>(`/tests/suites/${id}`, "PUT", data),
     get: (id: string) =>
       request<TestSuiteSerialized>(`/tests/suites/${id}`, "GET"),
+    delete: (id: string) => request(`/tests/suites/${id}`, "DELETE"),
     cases: {
       update: (suiteId: string, caseId: string, data: TestCaseCreatePayload) =>
         request<TestCaseSerialized>(

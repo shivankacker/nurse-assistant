@@ -53,3 +53,23 @@ export async function PUT(
 
   return NextResponse.json(testSuiteSerializer(updatedSuite));
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ suiteId: string }> },
+) {
+  const { suiteId } = await params;
+
+  try {
+    await prisma.testSuite.delete({
+      where: { id: suiteId },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: "Failed to delete test suite" },
+      { status: 500 },
+    );
+  }
+}

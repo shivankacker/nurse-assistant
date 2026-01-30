@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { TEST_RUN_STATUS } from "@/prisma/client/index-browser";
 import { API } from "@/utils/api";
 import { LLMS } from "@/utils/constants";
@@ -32,6 +33,25 @@ export default function Client(props: {
   });
 
   const testRuns = testRunsQuery.data?.pages.flatMap((page) => page.results);
+
+  const calculateAverageScore = (runs: TestRunSerialized["runs"]) => {
+    const completedRuns = runs.filter(
+      (r) =>
+        r.status === "COMPLETED" &&
+        r.cosineSimScore &&
+        r.bleuScore &&
+        r.llmScore,
+    );
+
+    if (completedRuns.length === 0) return null;
+
+    const sum = completedRuns.reduce(
+      (acc, r) => acc + (r.cosineSimScore! + r.bleuScore! + r.llmScore!) / 3,
+      0,
+    );
+
+    return sum / completedRuns.length;
+  };
 
   return (
     <div>
@@ -91,31 +111,56 @@ export default function Client(props: {
               100,
           );
 
+          const averageScore = calculateAverageScore(run.runs);
+
           return (
             <Link href={`/admin/tests/runs/${run.id}`} key={run.id}>
-              <Card>
+              <Card className="hover:shadow-md transition-shadow">
                 <CardHeader>
-                  <CardTitle>{run.suite.name}</CardTitle>
-                  <CardDescription className="grid grid-cols-2 gap-1 text-xs">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <CardTitle className="mb-2">{run.suite.name}</CardTitle>
+                      <div className="flex items-center gap-2 flex-wrap mb-3">
+                        {isFailed && (
+                          <Badge variant="destructive">Failed</Badge>
+                        )}
+                        {isRunning && (
+                          <Badge variant="default" className="animate-pulse">
+                            Running
+                          </Badge>
+                        )}
+                        {isComplete && (
+                          <Badge variant="default" className="bg-green-600">
+                            Completed
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {run.runs.length} test case
+                          {run.runs.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      {averageScore !== null && (
+                        <div className="mb-3">
+                          <div className="text-2xl font-bold text-primary">
+                            {Math.round(averageScore * 100)}%
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Average Score
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <CardDescription className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {metrics.map((metric) => (
-                      <div key={metric.name}>
-                        <strong>{metric.name}:</strong> {metric.value}
+                      <div key={metric.name} className="flex gap-1">
+                        <span className="font-medium text-muted-foreground">
+                          {metric.name}:
+                        </span>
+                        <span className="text-foreground">{metric.value}</span>
                       </div>
                     ))}
                   </CardDescription>
-                  <CardAction>
-                    {isFailed && (
-                      <div className="text-red-600 font-semibold">FAILED</div>
-                    )}
-                    {isRunning && (
-                      <div className="text-blue-600 font-semibold">RUNNING</div>
-                    )}
-                    {isComplete && (
-                      <div className="text-green-600 font-semibold">
-                        COMPLETED
-                      </div>
-                    )}
-                  </CardAction>
                 </CardHeader>
               </Card>
             </Link>
