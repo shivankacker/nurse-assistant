@@ -48,5 +48,5 @@ export async function DELETE(
     where: { id: caseId, testSuiteId: suiteId },
   });
 
-  return NextResponse.json(null, { status: 204 });
+  return NextResponse.json({}, { status: 200 });
 }

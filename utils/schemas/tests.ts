@@ -1,6 +1,13 @@
-import { Context, TestCase, TestSuite } from "@/prisma/client";
+import {
+  Context,
+  TestCase,
+  TestRun,
+  TestRunResult,
+  TestSuite,
+} from "@/prisma/client";
 import z from "zod";
 import { contextSerializer } from "./context";
+import { LLMS } from "../constants";
 
 export function testCaseSerializer(testCase: TestCase) {
   return {
@@ -31,6 +38,54 @@ export function testSuiteSerializer(
 
 export type TestSuiteSerialized = ReturnType<typeof testSuiteSerializer>;
 
+export function testRunResultSerializer(testRunResult: TestRunResult) {
+  return {
+    id: testRunResult.id,
+    caseId: testRunResult.caseId,
+    status: testRunResult.status,
+    failReason: testRunResult.failReason,
+    answer: testRunResult.answer,
+    bleuScore: testRunResult.bleuScore,
+    cosineSimScore: testRunResult.cosineSimScore,
+    llmScore: testRunResult.llmScore,
+    llmScoreReason: testRunResult.llmScoreReason,
+    createdAt: testRunResult.createdAt,
+    answeredAt: testRunResult.answeredAt,
+    scoredAt: testRunResult.scoredAt,
+  };
+}
+
+export type TestRunResultSerialized = ReturnType<
+  typeof testRunResultSerializer
+>;
+
+export function testRunSerializer(
+  testRun: TestRun & {
+    suite: TestSuite & {
+      testCases: TestCase[];
+      contexts: Context[];
+    };
+
+    testRunResults: TestRunResult[];
+  },
+) {
+  return {
+    id: testRun.id,
+    suite: testSuiteSerializer(testRun.suite),
+    llmModel: testRun.llmModel,
+    topP: testRun.topP,
+    topK: testRun.topK,
+    temperature: testRun.temperature,
+    prompt: testRun.prompt,
+    createdAt: testRun.createdAt,
+    updatedAt: testRun.updatedAt,
+    completedAt: testRun.completedAt,
+    runs: testRun.testRunResults.map(testRunResultSerializer),
+  };
+}
+
+export type TestRunSerialized = ReturnType<typeof testRunSerializer>;
+
 export const testSuiteCreateSchema = z.object({
   name: z.string().min(1).max(255),
 });
@@ -56,3 +111,13 @@ export const testCaseCreateSchema = z
   );
 
 export type TestCaseCreatePayload = z.infer<typeof testCaseCreateSchema>;
+
+export const testRunCreateSchema = z.object({
+  llmModel: z.enum(Object.keys(LLMS) as (keyof typeof LLMS)[]),
+  prompt: z.string().min(1),
+  temperature: z.number().min(0).max(1),
+  topP: z.number().min(0).max(1),
+  topK: z.number().min(0),
+});
+
+export type TestRunCreatePayload = z.infer<typeof testRunCreateSchema>;

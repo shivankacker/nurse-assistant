@@ -41,11 +41,11 @@ export function MultiSelect({
     <Combobox
       multiple
       autoHighlight
-      items={options} // ✅ IMPORTANT: objects, not strings
+      items={options}
       value={values}
       onValueChange={onChange}
+      modal={true}
     >
-      {/* Anchor wrapper is safer than relying on ref forwarding */}
       <div ref={anchor} className="w-full">
         <ComboboxChips>
           <ComboboxValue>

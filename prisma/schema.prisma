@@ -71,7 +71,7 @@ model TestRunResult {
   runId          String
   testRun        TestRun         @relation(fields: [runId], references: [id])
   caseId         String
-  testCase       TestCase        @relation(fields: [caseId], references: [id])
+  testCase       TestCase        @relation(fields: [caseId], references: [id], onDelete: Cascade)
   status         TEST_RUN_STATUS @default(PENDING)
   failReason     String?
   answer         String?

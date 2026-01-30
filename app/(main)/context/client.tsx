@@ -79,7 +79,7 @@ export default function Client(props: { context: ContextSerialized[] }) {
           <SheetTrigger asChild>
             <Button>Create</Button>
           </SheetTrigger>
-          <SheetContent>
+          <SheetContent className="overflow-auto">
             <SheetHeader>
               <SheetTitle>Create Context</SheetTitle>
             </SheetHeader>

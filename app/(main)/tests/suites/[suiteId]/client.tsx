@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldError,
@@ -16,7 +17,14 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
   SheetContent,
@@ -26,16 +34,20 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { API } from "@/utils/api";
+import { LLMS } from "@/utils/constants";
 import { ContextSerialized } from "@/utils/schemas/context";
 import {
   TestCaseCreatePayload,
   testCaseCreateSchema,
+  TestRunCreatePayload,
   TestSuiteSerialized,
   TestSuiteUpdatePayload,
 } from "@/utils/schemas/tests";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { PlayIcon } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 export default function Client(props: {
@@ -43,6 +55,7 @@ export default function Client(props: {
   contexts: ContextSerialized[];
 }) {
   const { suite: serverSuite, contexts } = props;
+  const router = useRouter();
 
   const suiteQuery = useQuery({
     queryKey: ["suites", serverSuite.id],
@@ -66,6 +79,15 @@ export default function Client(props: {
       toast.success("Test case created successfully");
       suiteQuery.refetch();
       createCaseForm.reset();
+    },
+  });
+
+  const createTestRunMutation = useMutation({
+    mutationFn: (data: TestRunCreatePayload) =>
+      API.tests.suites.run(suite.id, data),
+    onSuccess: (data) => {
+      toast.success("Test run created successfully");
+      router.push(`/tests/runs/${data.id}`);
     },
   });
 
@@ -105,12 +127,32 @@ export default function Client(props: {
 
   const updateContextForm = useForm({
     defaultValues: {
-      contextIds: [] as string[],
+      contextIds: suite.contexts.map((c) => c.id),
+      name: suite.name,
     },
     onSubmit: async ({ value }) => {
       updateSuiteMutation.mutate({
-        name: suite.name,
+        name: value.name,
         contextIds: value.contextIds,
+      });
+    },
+  });
+
+  const createRunForm = useForm({
+    defaultValues: {
+      llmModel: Object.keys(LLMS)[0] as keyof typeof LLMS,
+      prompt: "",
+      temperature: 0.7,
+      topP: 1,
+      topK: 40,
+    },
+    onSubmit: async ({ value }) => {
+      createTestRunMutation.mutate({
+        llmModel: value.llmModel,
+        prompt: value.prompt,
+        temperature: value.temperature,
+        topP: value.topP,
+        topK: value.topK,
       });
     },
   });
@@ -118,14 +160,112 @@ export default function Client(props: {
   return (
     <div>
       <div className="flex items-center gap-2 justify-between">
-        <h1 className="text-2xl font-semibold">
-          "{serverSuite.name}" Test Suite
-        </h1>
+        <h1 className="text-2xl font-semibold">"{suite.name}" Test Suite</h1>
+
         <div className="flex items-center gap-2">
           <Sheet>
             <SheetTrigger asChild>
               <Button variant={"secondary"}>Edit</Button>
             </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Edit Suite</SheetTitle>
+              </SheetHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  updateContextForm.handleSubmit();
+                }}
+              >
+                <FieldGroup className="px-4">
+                  <updateContextForm.Field
+                    name="name"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>
+                            Suite Name
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            aria-invalid={isInvalid}
+                            placeholder="Enter suite name"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                  <div className="flex flex-col gap-4">
+                    <FieldLabel>Context</FieldLabel>
+                    <updateContextForm.Field
+                      name="contextIds"
+                      children={(field) => {
+                        const isInvalid =
+                          field.state.meta.isTouched &&
+                          !field.state.meta.isValid;
+                        return contexts.map((context) => (
+                          <Field
+                            data-invalid={isInvalid}
+                            key={field.name + context.id}
+                            orientation={"horizontal"}
+                          >
+                            <Checkbox
+                              id={field.name + "-" + context.id}
+                              name={field.name}
+                              value={context.id}
+                              checked={field.state.value.includes(context.id)}
+                              onCheckedChange={(checked) => {
+                                let newValue = [...field.state.value];
+                                if (checked) {
+                                  newValue.push(context.id);
+                                } else {
+                                  newValue = newValue.filter(
+                                    (id) => id !== context.id,
+                                  );
+                                }
+                                field.handleChange(newValue);
+                              }}
+                            />
+                            <FieldLabel htmlFor={field.name + "-" + context.id}>
+                              {context.name}
+                            </FieldLabel>
+
+                            {isInvalid && (
+                              <FieldError errors={field.state.meta.errors} />
+                            )}
+                          </Field>
+                        ));
+                      }}
+                    />
+                  </div>
+                </FieldGroup>
+                <div className="px-4 mt-4">
+                  <Button
+                    asChild
+                    disabled={createCaseMutation.isPending}
+                    variant={"secondary"}
+                    className="w-full"
+                  >
+                    <Link href={"/context?new=true"}>Create Context</Link>
+                  </Button>
+                </div>
+                <SheetFooter>
+                  <Button disabled={createCaseMutation.isPending} type="submit">
+                    Submit
+                  </Button>
+                </SheetFooter>
+              </form>
+            </SheetContent>
           </Sheet>
           <Sheet>
             <SheetTrigger asChild>
@@ -134,9 +274,198 @@ export default function Client(props: {
                 Run
               </Button>
             </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Create Test Run</SheetTitle>
+              </SheetHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  createRunForm.handleSubmit();
+                }}
+              >
+                <FieldGroup className="px-4">
+                  <createRunForm.Field
+                    name="llmModel"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>
+                            LLM Model
+                          </FieldLabel>
+                          <Select
+                            value={field.state.value}
+                            onValueChange={(value) =>
+                              field.handleChange(value as keyof typeof LLMS)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select LLM model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(LLMS).map(([model, data]) => (
+                                <SelectItem key={model} value={model}>
+                                  {data.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                  <createRunForm.Field
+                    name="prompt"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>Prompt</FieldLabel>
+                          <Textarea
+                            id={field.name}
+                            name={field.name}
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            aria-invalid={isInvalid}
+                            placeholder="Enter prompt"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                  <createRunForm.Field
+                    name="temperature"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>
+                            Temperature
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="2"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) =>
+                              field.handleChange(parseFloat(e.target.value))
+                            }
+                            aria-invalid={isInvalid}
+                            placeholder="0.7"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                  <createRunForm.Field
+                    name="topP"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>Top P</FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="1"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) =>
+                              field.handleChange(parseFloat(e.target.value))
+                            }
+                            aria-invalid={isInvalid}
+                            placeholder="1"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                  <createRunForm.Field
+                    name="topK"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>Top K</FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            type="number"
+                            step="1"
+                            min="1"
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) =>
+                              field.handleChange(parseInt(e.target.value))
+                            }
+                            aria-invalid={isInvalid}
+                            placeholder="40"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                </FieldGroup>
+
+                <SheetFooter>
+                  <Button
+                    disabled={createTestRunMutation.isPending}
+                    type="submit"
+                  >
+                    Run Tests
+                  </Button>
+                </SheetFooter>
+              </form>
+            </SheetContent>
           </Sheet>
         </div>
       </div>
+      <p>
+        <span className="italics opacity-60">Context : </span>{" "}
+        {suite.contexts.map((context) => (
+          <Button
+            asChild
+            key={context.id}
+            variant={"link"}
+            className="inline p-0 text-base"
+          >
+            <Link href={`/context/${context.id}`}>{context.name}</Link>
+          </Button>
+        ))}
+      </p>
       <h2 className="text-lg font-semibold mt-8">Questions</h2>
       <div className="flex flex-col gap-4 mt-4">
         {suite.testCases.map((testCase) => (
@@ -218,66 +547,6 @@ export default function Client(props: {
                           aria-invalid={isInvalid}
                           placeholder="Enter expected answer"
                           autoComplete="off"
-                        />
-                        {isInvalid && (
-                          <FieldError errors={field.state.meta.errors} />
-                        )}
-                      </Field>
-                    );
-                  }}
-                />
-              </FieldGroup>
-
-              <SheetFooter>
-                <Button disabled={createCaseMutation.isPending} type="submit">
-                  Submit
-                </Button>
-              </SheetFooter>
-            </form>
-          </SheetContent>
-        </Sheet>
-      </div>
-      <h2 className="text-lg font-semibold mt-8">Context</h2>
-      <div className="flex flex-col gap-4 mt-4">
-        {suite.contexts.map((context) => (
-          <Card key={context.id}>
-            <CardHeader>
-              <CardTitle>{context.name}</CardTitle>
-            </CardHeader>
-          </Card>
-        ))}
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant={"secondary"}>Add context</Button>
-          </SheetTrigger>
-          <SheetContent>
-            <SheetHeader>
-              <SheetTitle>Add Context</SheetTitle>
-            </SheetHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                updateContextForm.handleSubmit();
-              }}
-            >
-              <FieldGroup className="px-4">
-                <updateContextForm.Field
-                  name="contextIds"
-                  children={(field) => {
-                    const isInvalid =
-                      field.state.meta.isTouched && !field.state.meta.isValid;
-                    return (
-                      <Field data-invalid={isInvalid}>
-                        <FieldLabel htmlFor={field.name}>Contexts</FieldLabel>
-                        <MultiSelect
-                          options={contexts.map((context) => ({
-                            label: context.name,
-                            value: context.id,
-                          }))}
-                          values={field.state.value}
-                          onChange={(values) => {
-                            field.setValue(values);
-                          }}
                         />
                         {isInvalid && (
                           <FieldError errors={field.state.meta.errors} />

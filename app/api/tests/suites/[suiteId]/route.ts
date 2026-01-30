@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSuite } from "./server";
 import { testRunQueue } from "@/jobs/queue";
+import { parseBody } from "@/utils/parse-data";
+import {
+  testSuiteSerializer,
+  testSuiteUpdateSchema,
+} from "@/utils/schemas/tests";
+import prisma from "@/prisma/prisma";
 
 export async function GET(
   request: NextRequest,
@@ -19,19 +25,31 @@ export async function GET(
   return NextResponse.json(suite);
 }
 
-export async function POST(
+export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ suiteId: string }> },
 ) {
   const { suiteId } = await params;
 
-  // Add job to the queue
-  const job = await testRunQueue.add("run-test", {
-    suiteId,
+  const parsedBody = await parseBody(request, testSuiteUpdateSchema);
+
+  if (!parsedBody.success) {
+    return NextResponse.json(parsedBody.errors, { status: 400 });
+  }
+
+  const updatedSuite = await prisma.testSuite.update({
+    where: { id: suiteId },
+    data: {
+      name: parsedBody.data.name,
+      contexts: {
+        set: parsedBody.data.contextIds.map((id) => ({ id })),
+      },
+    },
+    include: {
+      contexts: true,
+      testCases: true,
+    },
   });
 
-  return NextResponse.json({
-    message: "Test run queued",
-    jobId: job.id,
-  });
+  return NextResponse.json(testSuiteSerializer(updatedSuite));
 }
