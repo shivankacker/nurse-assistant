@@ -1,5 +1,6 @@
 "use client";
 
+import { MultiSelect } from "@/components/multi-select";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -15,6 +16,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -24,23 +26,37 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { API } from "@/utils/api";
+import { ContextSerialized } from "@/utils/schemas/context";
 import {
   TestCaseCreatePayload,
   testCaseCreateSchema,
   TestSuiteSerialized,
+  TestSuiteUpdatePayload,
 } from "@/utils/schemas/tests";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { PlayIcon } from "lucide-react";
 import { toast } from "sonner";
 
-export default function Client(props: { suite: TestSuiteSerialized }) {
-  const { suite: serverSuite } = props;
+export default function Client(props: {
+  suite: TestSuiteSerialized;
+  contexts: ContextSerialized[];
+}) {
+  const { suite: serverSuite, contexts } = props;
 
   const suiteQuery = useQuery({
     queryKey: ["suites", serverSuite.id],
     queryFn: () => API.tests.suites.get(serverSuite.id),
     initialData: serverSuite,
+  });
+
+  const updateSuiteMutation = useMutation({
+    mutationFn: (data: TestSuiteUpdatePayload) =>
+      API.tests.suites.update(serverSuite.id, data),
+    onSuccess: () => {
+      toast.success("Test suite updated successfully");
+      suiteQuery.refetch();
+    },
   });
 
   const createCaseMutation = useMutation({
@@ -83,6 +99,18 @@ export default function Client(props: { suite: TestSuiteSerialized }) {
           ? value.questionImagePath
           : undefined) as string,
         expectedAnswer: value.expectedAnswer,
+      });
+    },
+  });
+
+  const updateContextForm = useForm({
+    defaultValues: {
+      contextIds: [] as string[],
+    },
+    onSubmit: async ({ value }) => {
+      updateSuiteMutation.mutate({
+        name: suite.name,
+        contextIds: value.contextIds,
       });
     },
   });
@@ -190,6 +218,66 @@ export default function Client(props: { suite: TestSuiteSerialized }) {
                           aria-invalid={isInvalid}
                           placeholder="Enter expected answer"
                           autoComplete="off"
+                        />
+                        {isInvalid && (
+                          <FieldError errors={field.state.meta.errors} />
+                        )}
+                      </Field>
+                    );
+                  }}
+                />
+              </FieldGroup>
+
+              <SheetFooter>
+                <Button disabled={createCaseMutation.isPending} type="submit">
+                  Submit
+                </Button>
+              </SheetFooter>
+            </form>
+          </SheetContent>
+        </Sheet>
+      </div>
+      <h2 className="text-lg font-semibold mt-8">Context</h2>
+      <div className="flex flex-col gap-4 mt-4">
+        {suite.contexts.map((context) => (
+          <Card key={context.id}>
+            <CardHeader>
+              <CardTitle>{context.name}</CardTitle>
+            </CardHeader>
+          </Card>
+        ))}
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button variant={"secondary"}>Add context</Button>
+          </SheetTrigger>
+          <SheetContent>
+            <SheetHeader>
+              <SheetTitle>Add Context</SheetTitle>
+            </SheetHeader>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                updateContextForm.handleSubmit();
+              }}
+            >
+              <FieldGroup className="px-4">
+                <updateContextForm.Field
+                  name="contextIds"
+                  children={(field) => {
+                    const isInvalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid;
+                    return (
+                      <Field data-invalid={isInvalid}>
+                        <FieldLabel htmlFor={field.name}>Contexts</FieldLabel>
+                        <MultiSelect
+                          options={contexts.map((context) => ({
+                            label: context.name,
+                            value: context.id,
+                          }))}
+                          values={field.state.value}
+                          onChange={(values) => {
+                            field.setValue(values);
+                          }}
                         />
                         {isInvalid && (
                           <FieldError errors={field.state.meta.errors} />

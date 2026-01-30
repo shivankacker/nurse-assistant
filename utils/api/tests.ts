@@ -5,6 +5,7 @@ import {
   TestCaseSerialized,
   TestSuiteCreatePayload,
   TestSuiteSerialized,
+  TestSuiteUpdatePayload,
 } from "../schemas/tests";
 
 export const testApi = {
@@ -17,6 +18,8 @@ export const testApi = {
       ),
     create: (data: TestSuiteCreatePayload) =>
       request("/tests/suites", "POST", data),
+    update: (id: string, data: TestSuiteUpdatePayload) =>
+      request<TestSuiteSerialized>(`/tests/suites/${id}`, "PUT", data),
     get: (id: string) =>
       request<TestSuiteSerialized>(`/tests/suites/${id}`, "GET"),
     cases: {

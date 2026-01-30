@@ -8,6 +8,7 @@ export async function getServerSuites(filters: LimitOffset) {
     skip: filters.offset,
     include: {
       testCases: true,
+      contexts: true,
     },
     orderBy: {
       createdAt: "desc",
