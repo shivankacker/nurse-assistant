@@ -1,6 +1,7 @@
 import { contextApi } from "./context";
 import { testApi } from "./tests";
 import { projectApi, promptApi } from "./project";
+import { chatApi, chatMessageApi } from "./chat";
 
 type endpoint = `/${string}`;
 
@@ -107,4 +108,6 @@ export const API = {
   context: contextApi,
   projects: projectApi,
   prompts: promptApi,
+  chats: chatApi,
+  chatMessages: chatMessageApi,
 };
