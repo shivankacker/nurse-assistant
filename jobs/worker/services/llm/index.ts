@@ -199,3 +199,84 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     throw new Error(`Embedding generation failed: ${errorMessage}`);
   }
 }
+
+/**
+ * Audio generation parameters
+ */
+export type AudioGenerateParams = {
+  audioBase64: string;
+  audioFormat: "wav" | "mp3" | "m4a" | "flac" | "ogg";
+  prompt: string;
+  context: string;
+  temperature: number;
+  topP: number;
+};
+
+/**
+ * Generate an answer from audio input using multimodal LLM
+ *
+ * Uses OpenAI's audio-capable models (gpt-4o-audio-preview or similar)
+ * to process audio directly without transcription.
+ */
+export async function generateAnswerWithAudio(
+  params: AudioGenerateParams
+): Promise<string> {
+  const { audioBase64, audioFormat, prompt, context, temperature, topP } = params;
+
+  // Get audio model from env or default
+  const audioModelString = process.env.AUDIO_MODEL || "openai:gpt-4o-audio-preview";
+  const config = parseModelString(audioModelString);
+
+  if (config.provider !== "openai") {
+    throw new Error(
+      `Audio input is currently only supported with OpenAI models. Got: ${config.provider}`
+    );
+  }
+
+  const model = getModel(config);
+
+  // Build text context
+  const textContent = context
+    ? `${prompt}\n\n--- Context ---\n${context}\n\n--- Audio Question ---\nPlease listen to the audio and answer the question based on the context above.`
+    : `${prompt}\n\n--- Audio Question ---\nPlease listen to the audio and answer the question.`;
+
+  // Get MIME type for audio format
+  const mimeTypes: Record<string, string> = {
+    wav: "audio/wav",
+    mp3: "audio/mpeg",
+    m4a: "audio/mp4",
+    flac: "audio/flac",
+    ogg: "audio/ogg",
+  };
+
+  console.log(`[LLM] Generating answer from audio with ${audioModelString}`);
+  console.log(`[LLM] Audio format: ${audioFormat}, Temperature: ${temperature}`);
+
+  try {
+    const { text } = await generateText({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: textContent },
+            {
+              type: "file",
+              mediaType: mimeTypes[audioFormat],
+              data: Buffer.from(audioBase64, "base64"),
+            },
+          ],
+        },
+      ],
+      temperature,
+      topP,
+    });
+
+    console.log(`[LLM] Generated ${text.length} characters from audio`);
+    return text;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[LLM] Audio generation failed: ${errorMessage}`);
+    throw new Error(`Audio LLM generation failed: ${errorMessage}`);
+  }
+}

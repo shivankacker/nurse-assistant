@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+.pnpm-store/
 /.pnp
 .pnp.*
 .yarn/*
@@ -72,3 +73,7 @@ next-env.d.ts
 # AI conversation logs
 *.plan.md
 .cursorignore
+
+# Test data files (PDFs and audio for testing)
+public/files/
+public/audio_files/

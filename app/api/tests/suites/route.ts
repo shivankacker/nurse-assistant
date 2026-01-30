@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
     },
     include: {
       testCases: true,
+      contexts: true,
     },
   });
 

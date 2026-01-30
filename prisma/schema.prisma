@@ -60,6 +60,12 @@ model TestRun {
   topK           Int
   temperature    Float
   prompt         String
+
+  // LLM Judge configuration (optional, falls back to env vars if null)
+  llmJudgeModel  String?
+  llmJudgePrompt String?
+
+  status         TEST_RUN_STATUS @default(PENDING)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   completedAt    DateTime?

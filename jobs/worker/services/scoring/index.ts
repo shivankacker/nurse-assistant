@@ -17,11 +17,11 @@ import type { ScoreInput, ScoreResult } from "../../types";
 /**
  * Calculate all scores for a generated answer
  *
- * @param input - Contains generated answer, expected answer, question, and model
+ * @param input - Contains generated answer, expected answer, question, and optional judge config
  * @returns Combined scores from all methods
  */
 export async function calculateScores(input: ScoreInput): Promise<ScoreResult> {
-  const { generatedAnswer, expectedAnswer, question, model } = input;
+  const { generatedAnswer, expectedAnswer, question, context, judgeModel, judgePrompt } = input;
 
   console.log(`[Scoring] Calculating scores for answer (${generatedAnswer.length} chars)`);
 
@@ -43,13 +43,15 @@ export async function calculateScores(input: ScoreInput): Promise<ScoreResult> {
   }
   console.log(`[Scoring] Cosine: ${cosine.toFixed(4)} (${Date.now() - cosineStart}ms)`);
 
-  // Calculate LLM-as-judge score
+  // Calculate LLM-as-judge score with optional custom config
+  // Pass context so judge can evaluate if answer correctly uses available information
   const llmStart = Date.now();
   const llmResult = await calculateLlmJudgeScore(
     question,
     generatedAnswer,
-    expectedAnswer
-    // Uses default judge model from env
+    expectedAnswer,
+    context,
+    { judgeModel, judgePrompt }
   );
   console.log(
     `[Scoring] LLM Judge: ${llmResult.score.toFixed(4)} (${Date.now() - llmStart}ms)`
@@ -97,7 +99,7 @@ export function calculateAggregateScore(scores: ScoreResult): number {
 }
 
 // Re-export individual scoring functions for direct use
-export { calculateBleuScore, calculateSmoothBleuScore } from "./bleu";
+export { calculateBleuScore, calculateSmoothBleuScore, calculateRawBleuScore } from "./bleu";
 export {
   calculateEmbeddingCosineSimilarity,
   calculateTfIdfCosineSimilarity,
