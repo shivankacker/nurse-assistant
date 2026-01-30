@@ -39,6 +39,7 @@ const DEFAULT_LLM_PARAMS = {
   llmJudgePrompt: process.env.LLM_JUDGE_PROMPT || null,
 };
 
+
 // Redis connection for BullMQ
 const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: null, // Required for BullMQ

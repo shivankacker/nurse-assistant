@@ -76,4 +76,7 @@ next-env.d.ts
 
 # Test data files (PDFs and audio for testing)
 public/files/
-public/audio_files/*.md
+public/audio_files/
+
+# Markdown files
+*.md

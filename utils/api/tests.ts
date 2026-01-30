@@ -3,6 +3,8 @@ import { LimitOffset, PaginatedResponse } from "../schemas/base";
 import {
   TestCaseCreatePayload,
   TestCaseSerialized,
+  TestRunCreatePayload,
+  TestRunSerialized,
   TestSuiteCreatePayload,
   TestSuiteSerialized,
   TestSuiteUpdatePayload,
@@ -22,6 +24,7 @@ export const testApi = {
       request<TestSuiteSerialized>(`/tests/suites/${id}`, "PUT", data),
     get: (id: string) =>
       request<TestSuiteSerialized>(`/tests/suites/${id}`, "GET"),
+    delete: (id: string) => request(`/tests/suites/${id}`, "DELETE"),
     cases: {
       update: (suiteId: string, caseId: string, data: TestCaseCreatePayload) =>
         request<TestCaseSerialized>(
@@ -34,5 +37,16 @@ export const testApi = {
       delete: (suiteId: string, caseId: string) =>
         request(`/tests/suites/${suiteId}/cases/${caseId}`, "DELETE"),
     },
+    run: (suiteId: string, data: TestRunCreatePayload) =>
+      request<TestRunSerialized>(`/tests/suites/${suiteId}/run`, "POST", data),
+  },
+  runs: {
+    list: (filters: LimitOffset) =>
+      request<PaginatedResponse<TestRunSerialized>>(
+        "/tests/runs",
+        "GET",
+        filters,
+      ),
+    get: (id: string) => request<TestRunSerialized>(`/tests/runs/${id}`, "GET"),
   },
 };

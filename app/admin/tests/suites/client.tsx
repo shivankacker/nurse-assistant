@@ -30,11 +30,15 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import Link from "next/link";
+import { InfiniteScroll } from "@/components/infinite-scroll";
+import { ContextSerialized } from "@/utils/schemas/context";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function Client(props: {
   suites: PaginatedResponse<TestSuiteSerialized>;
+  contexts: ContextSerialized[];
 }) {
-  const { suites: serverSuites } = props;
+  const { suites: serverSuites, contexts } = props;
 
   const suitesQuery = useInfiniteQuery({
     queryKey: ["suites"],
@@ -58,7 +62,7 @@ export default function Client(props: {
   const form = useForm({
     defaultValues: {
       name: "",
-    },
+    } as TestSuiteCreatePayload,
     validators: {
       onSubmit: testSuiteCreateSchema,
     },
@@ -114,18 +118,80 @@ export default function Client(props: {
                     );
                   }}
                 />
+                <div className="flex flex-col gap-4">
+                  <FieldLabel>Context</FieldLabel>
+                  <form.Field
+                    name="contextIds"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return contexts.map((context) => (
+                        <Field
+                          data-invalid={isInvalid}
+                          key={field.name + context.id}
+                          orientation={"horizontal"}
+                        >
+                          <Checkbox
+                            id={field.name + "-" + context.id}
+                            name={field.name}
+                            value={context.id}
+                            checked={
+                              field.state.value?.includes(context.id) ?? false
+                            }
+                            onCheckedChange={(checked) => {
+                              let newValue = [...(field.state.value || [])];
+                              if (checked) {
+                                newValue.push(context.id);
+                              } else {
+                                newValue = newValue.filter(
+                                  (id) => id !== context.id,
+                                );
+                              }
+                              field.handleChange(newValue);
+                            }}
+                          />
+                          <FieldLabel htmlFor={field.name + "-" + context.id}>
+                            {context.name}
+                          </FieldLabel>
+
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      ));
+                    }}
+                  />
+                </div>
               </FieldGroup>
 
+              <div className="px-4 mt-4">
+                <Button
+                  asChild
+                  disabled={createSuiteMutation.isPending}
+                  variant={"secondary"}
+                  className="w-full"
+                >
+                  <Link href={"/admin/context?new=true"}>Create Context</Link>
+                </Button>
+              </div>
+
               <SheetFooter>
-                <Button type="submit">Submit</Button>
+                <Button disabled={createSuiteMutation.isPending} type="submit">
+                  Submit
+                </Button>
               </SheetFooter>
             </form>
           </SheetContent>
         </Sheet>
       </div>
-      <div className="flex flex-col gap-4 mt-8">
+      <InfiniteScroll
+        onLoadMore={() => suitesQuery.fetchNextPage()}
+        hasMore={suitesQuery.hasNextPage ?? false}
+        isFetching={suitesQuery.isFetching}
+        className="flex flex-col gap-4 mt-8"
+      >
         {suites.map((suite) => (
-          <Link key={suite.id} href={`/tests/suites/${suite.id}`}>
+          <Link key={suite.id} href={`/admin/tests/suites/${suite.id}`}>
             <Card>
               <CardHeader>
                 <CardTitle>{suite.name}</CardTitle>
@@ -133,7 +199,7 @@ export default function Client(props: {
             </Card>
           </Link>
         ))}
-      </div>
+      </InfiniteScroll>
     </div>
   );
 }

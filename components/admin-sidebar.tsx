@@ -2,17 +2,12 @@
 
 import * as React from "react";
 import {
-  AudioWaveform,
-  BookOpen,
   Bot,
   ChevronRight,
-  Command,
-  Frame,
-  GalleryVerticalEnd,
-  Map,
-  PieChart,
-  Settings2,
   SquareTerminal,
+  FileText,
+  MessageSquare,
+  FolderKanban,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -50,16 +45,18 @@ const data = {
   testItems: [
     {
       title: "Suites",
-      url: "/tests/suites",
+      url: "/admin/tests/suites",
     },
     {
       title: "Runs",
-      url: "/tests/runs",
+      url: "/admin/tests/runs",
     },
   ],
 };
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AdminSidebar({
+  ...props
+}: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
@@ -69,7 +66,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <Link href="/">
+              <Link href="/admin">
                 {/* <IconInnerShadowTop className="size-5!" /> */}
                 <span className="text-base font-semibold">Nurse Assistant</span>
               </Link>
@@ -105,9 +102,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </Collapsible>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href={"/context"}>
-                <Bot />
+              <Link href={"/admin/context"}>
+                <FileText />
                 <span>Context</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link href={"/admin/prompts"}>
+                <MessageSquare />
+                <span>Prompts</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <Link href={"/admin/projects"}>
+                <FolderKanban />
+                <span>Projects</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
