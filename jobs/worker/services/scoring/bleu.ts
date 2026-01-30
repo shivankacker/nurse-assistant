@@ -5,13 +5,14 @@
  * machine-generated text against reference text.
  *
  * Score ranges from 0 to 1, where:
- * - 1.0 = perfect match
- * - 0.0 = no n-gram overlap
+ * - 1.0 = perfect/excellent match
+ * - 0.0 = no n-gram overlap / poor match
  *
  * Implementation follows the standard BLEU algorithm with:
  * - N-gram precision (1-gram to 4-gram by default)
  * - Brevity penalty for short outputs
  * - Geometric mean of precisions
+ * - Sigmoid normalization to spread scores across 0-1 range
  */
 
 /**
@@ -68,7 +69,8 @@ export function calculateBleuScore(
     const smoothedPrecisions = precisions.map((p) => (p === 0 ? 0.001 : p));
     const geometricMean = calculateGeometricMean(smoothedPrecisions);
     const bp = calculateBrevityPenalty(candidateTokens.length, referenceTokens.length);
-    return bp * geometricMean;
+    const rawScore = bp * geometricMean;
+    return normalizeWithSigmoid(rawScore);
   }
 
   // Calculate geometric mean of precisions
@@ -77,8 +79,9 @@ export function calculateBleuScore(
   // Calculate brevity penalty
   const bp = calculateBrevityPenalty(candidateTokens.length, referenceTokens.length);
 
-  // Final BLEU score
-  return bp * geometricMean;
+  // Final BLEU score with sigmoid normalization
+  const rawScore = bp * geometricMean;
+  return normalizeWithSigmoid(rawScore);
 }
 
 /**
@@ -164,6 +167,45 @@ function calculateBrevityPenalty(candidateLength: number, referenceLength: numbe
 }
 
 /**
+ * Normalize a raw BLEU score using sigmoid function
+ * 
+ * Raw BLEU scores tend to cluster very low (0.01-0.3 for typical text).
+ * This sigmoid normalization spreads scores more meaningfully:
+ * - Raw 0.0 → ~0.05 (very poor)
+ * - Raw 0.1 → ~0.27 (poor)
+ * - Raw 0.2 → ~0.50 (fair) 
+ * - Raw 0.3 → ~0.73 (good)
+ * - Raw 0.5 → ~0.92 (very good)
+ * - Raw 1.0 → ~0.99 (excellent)
+ * 
+ * @param rawScore - Raw BLEU score between 0 and 1
+ * @param midpoint - Score where sigmoid outputs 0.5 (default: 0.2)
+ * @param steepness - Controls how sharp the transition is (default: 10)
+ * @returns Normalized score between 0 and 1
+ */
+function normalizeWithSigmoid(
+  rawScore: number,
+  midpoint: number = 0.2,
+  steepness: number = 10
+): number {
+  // Clamp input to valid range
+  const clampedScore = Math.max(0, Math.min(1, rawScore));
+  
+  // Sigmoid function: 1 / (1 + e^(-k*(x-m)))
+  const sigmoid = 1 / (1 + Math.exp(-steepness * (clampedScore - midpoint)));
+  
+  // The raw sigmoid doesn't quite reach 0 or 1
+  // Normalize so that raw 0 → close to 0 and raw 1 → close to 1
+  const sigmoidAt0 = 1 / (1 + Math.exp(-steepness * (0 - midpoint)));
+  const sigmoidAt1 = 1 / (1 + Math.exp(-steepness * (1 - midpoint)));
+  
+  // Linear interpolation to map [sigmoid(0), sigmoid(1)] → [0, 1]
+  const normalized = (sigmoid - sigmoidAt0) / (sigmoidAt1 - sigmoidAt0);
+  
+  return Math.max(0, Math.min(1, normalized));
+}
+
+/**
  * Calculate sentence-level BLEU with smoothing
  * Better for single sentence evaluation
  */
@@ -199,6 +241,48 @@ export function calculateSmoothBleuScore(
     }
 
     precisions.push(precision);
+  }
+
+  const geometricMean = calculateGeometricMean(precisions);
+  const bp = calculateBrevityPenalty(candidateTokens.length, referenceTokens.length);
+
+  // Apply sigmoid normalization to spread scores meaningfully
+  const rawScore = bp * geometricMean;
+  return normalizeWithSigmoid(rawScore);
+}
+
+/**
+ * Calculate raw BLEU score without sigmoid normalization
+ * Useful for debugging or when standard BLEU is needed
+ */
+export function calculateRawBleuScore(
+  candidate: string,
+  reference: string,
+  maxN: number = 4
+): number {
+  const candidateTokens = tokenize(candidate);
+  const referenceTokens = tokenize(reference);
+
+  if (candidateTokens.length === 0 || referenceTokens.length === 0) {
+    return 0;
+  }
+
+  const precisions: number[] = [];
+
+  for (let n = 1; n <= maxN; n++) {
+    const candidateNgrams = getNgrams(candidateTokens, n);
+    const referenceNgrams = getNgrams(referenceTokens, n);
+
+    if (candidateNgrams.length === 0) {
+      continue;
+    }
+
+    const precision = calculateClippedPrecision(candidateNgrams, referenceNgrams);
+    precisions.push(precision);
+  }
+
+  if (precisions.length === 0 || precisions.some((p) => p === 0)) {
+    return 0;
   }
 
   const geometricMean = calculateGeometricMean(precisions);

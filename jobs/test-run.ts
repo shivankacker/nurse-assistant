@@ -4,7 +4,7 @@
  * BullMQ worker that processes test run jobs from the queue.
  * Delegates actual processing to the worker orchestrator.
  *
- * Job data format: { testRunId: string }
+ * Job data format: { testRunId?: string, suiteId?: string }
  *
  * Usage:
  *   pnpm worker
@@ -24,8 +24,21 @@ config({ path: ".env.local", override: true });
 
 import { Worker } from "bullmq";
 import IORedis from "ioredis";
-import { processTestRun } from "./worker";
+import { processTestRun, processTestRunBySuiteId } from "./worker";
 import type { TestRunJobData } from "./worker/types";
+
+// Default LLM parameters when only suiteId is provided
+const DEFAULT_LLM_PARAMS = {
+  llmModel: process.env.DEFAULT_LLM_MODEL || "openai:gpt-4o-mini",
+  prompt: "Answer the following question accurately and concisely based on the provided context:",
+  temperature: 0.7,
+  topP: 1,
+  topK: 0,
+  // Judge config: null means use env defaults
+  llmJudgeModel: process.env.LLM_JUDGE_MODEL || null,
+  llmJudgePrompt: process.env.LLM_JUDGE_PROMPT || null,
+};
+
 
 // Redis connection for BullMQ
 const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
@@ -36,16 +49,19 @@ const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379"
 export const testRunWorker = new Worker<TestRunJobData>(
   "test-run",
   async (job) => {
-    const { testRunId } = job.data;
+    const { testRunId, suiteId } = job.data;
 
-    if (!testRunId) {
-      throw new Error("Job data missing testRunId");
+    // Handle both cases: testRunId (direct) or suiteId (create TestRun first)
+    if (testRunId) {
+      console.log(`[Worker] Job ${job.id} received for TestRun: ${testRunId}`);
+      await processTestRun(testRunId);
+    } else if (suiteId) {
+      console.log(`[Worker] Job ${job.id} received for Suite: ${suiteId}`);
+      console.log(`[Worker] Creating TestRun with default params...`);
+      await processTestRunBySuiteId(suiteId, DEFAULT_LLM_PARAMS);
+    } else {
+      throw new Error("Job data missing both testRunId and suiteId");
     }
-
-    console.log(`[Worker] Job ${job.id} received for TestRun: ${testRunId}`);
-
-    // Delegate to the worker orchestrator
-    await processTestRun(testRunId);
 
     console.log(`[Worker] Job ${job.id} completed successfully`);
   },

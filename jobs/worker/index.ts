@@ -10,9 +10,9 @@
  * 6. Result persistence
  */
 import prisma from "@/prisma/prisma";
-import pLimit from "p-limit";
 import { loadContexts } from "./services/pdf";
-import { generateAnswer } from "./services/llm";
+import { generateAnswer, generateAnswerWithAudio } from "./services/llm";
+import { loadAudioAsBase64 } from "./services/audio";
 import { calculateScores } from "./services/scoring";
 import type {
   TestRunWithRelations,
@@ -21,8 +21,8 @@ import type {
   TestContextData,
 } from "./types";
 
-// Concurrency limit for LLM calls (to avoid rate limits)
-const LLM_CONCURRENCY = 3;
+// Note: Processing is now sequential for real-time updates
+// Concurrency was removed to enable immediate DB writes after each case
 
 /**
  * Process a test run job
@@ -36,7 +36,14 @@ export async function processTestRun(testRunId: string): Promise<void> {
 
   const startTime = Date.now();
 
-  // 1. Fetch test run with all relations
+  // 1. IMMEDIATELY mark as RUNNING for real-time frontend updates
+  await prisma.testRun.update({
+    where: { id: testRunId },
+    data: { status: "RUNNING" },
+  });
+  console.log(`[Worker] Status: RUNNING`);
+
+  // 2. Fetch test run with all relations
   const testRun = await fetchTestRunWithRelations(testRunId);
 
   if (!testRun) {
@@ -45,6 +52,7 @@ export async function processTestRun(testRunId: string): Promise<void> {
 
   console.log(`[Worker] Suite: ${testRun.suite.name}`);
   console.log(`[Worker] Model: ${testRun.llmModel}`);
+  console.log(`[Worker] Judge Model: ${testRun.llmJudgeModel || "(env default)"}`);
   console.log(`[Worker] Test cases: ${testRun.suite.testCases.length}`);
   console.log(`[Worker] Contexts: ${testRun.suite.contexts.length}`);
 
@@ -56,46 +64,50 @@ export async function processTestRun(testRunId: string): Promise<void> {
     );
     console.log(`[Worker] Context loaded: ${contextData.length} chars`);
 
-    // 4. Process each test case with concurrency limit
+    // 4. Process each test case SEQUENTIALLY and save IMMEDIATELY
+    // This enables real-time progress tracking in the frontend
     console.log(`\n[Worker] Processing ${testRun.suite.testCases.length} test cases...`);
 
-    const limit = pLimit(LLM_CONCURRENCY);
-    const results = await Promise.all(
-      testRun.suite.testCases.map((testCase, index) =>
-        limit(() =>
-          processTestCaseSafe(testRun, testCase as TestCaseData, contextData, index)
-        )
-      )
-    );
+    let successCount = 0;
+    for (let i = 0; i < testRun.suite.testCases.length; i++) {
+      const testCase = testRun.suite.testCases[i] as TestCaseData;
 
-    // Filter out any null results (from failed cases)
-    const validResults = results.filter(
-      (r): r is TestRunResultInput => r !== null
-    );
+      console.log(`\n[Case ${i + 1}/${testRun.suite.testCases.length}] Processing...`);
 
-    // 5. Save all results
-    if (validResults.length > 0) {
-      console.log(`\n[Worker] Saving ${validResults.length} results...`);
-      await prisma.testRunResult.createMany({
-        data: validResults,
-      });
+      const result = await processTestCaseSafe(testRun, testCase, contextData, i);
+
+      if (result) {
+        // Save result IMMEDIATELY (not batched) for real-time updates
+        await prisma.testRunResult.create({ data: result });
+        console.log(`[Case ${i + 1}] Saved to DB`);
+
+        if (result.status === "COMPLETED") {
+          successCount++;
+        }
+      }
     }
 
-    // 6. Mark as completed
+    // 5. Mark as COMPLETED
     const elapsedTime = Date.now() - startTime;
     await prisma.testRun.update({
       where: { id: testRunId },
       data: {
+        status: "COMPLETED",
         completedAt: new Date(),
       },
     });
 
     console.log(`\n${"=".repeat(60)}`);
     console.log(`[Worker] Test run COMPLETED in ${(elapsedTime / 1000).toFixed(2)}s`);
-    console.log(`[Worker] Results: ${validResults.length}/${testRun.suite.testCases.length} successful`);
+    console.log(`[Worker] Results: ${successCount}/${testRun.suite.testCases.length} successful`);
     console.log(`${"=".repeat(60)}\n`);
   } catch (error) {
-    // 7. Log failure (status is now tracked per TestRunResult)
+    // Mark as FAILED on unrecoverable error
+    await prisma.testRun.update({
+      where: { id: testRunId },
+      data: { status: "FAILED" },
+    });
+
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`\n[Worker] Test run FAILED: ${errorMessage}`);
     throw error;
@@ -176,35 +188,63 @@ async function processTestCaseSafe(
 
 /**
  * Process a single test case
+ * Supports both text questions and audio questions (multimodal)
  */
 async function processTestCase(
   testRun: TestRunWithRelations,
   testCase: TestCaseData,
   contextData: string
 ): Promise<TestRunResultInput> {
-  const questionText = getQuestionText(testCase);
+  let answer: string;
+  let questionForScoring: string;
 
-  // 1. Generate LLM answer
-  console.log(`  [LLM] Generating answer...`);
-  const answer = await generateAnswer({
-    model: testRun.llmModel,
-    prompt: testRun.prompt,
-    question: questionText,
-    context: contextData,
-    temperature: testRun.temperature,
-    topP: testRun.topP,
-    topK: testRun.topK,
-  });
+  // Check if this is an audio question
+  if (testCase.questionAudioPath) {
+    // AUDIO PATH: Load audio and send directly to multimodal model
+    console.log(`  [Audio] Loading: ${testCase.questionAudioPath}`);
+    const audio = await loadAudioAsBase64(testCase.questionAudioPath);
+
+    console.log(`  [LLM] Generating answer from audio...`);
+    answer = await generateAnswerWithAudio({
+      audioBase64: audio.data,
+      audioFormat: audio.format,
+      prompt: testRun.prompt,
+      context: contextData,
+      temperature: testRun.temperature,
+      topP: testRun.topP,
+    });
+
+    // For scoring, use a placeholder since we don't have text
+    questionForScoring = `[Audio question from: ${testCase.questionAudioPath}]`;
+  } else {
+    // TEXT PATH: Standard text-based generation
+    questionForScoring = testCase.questionText || "[No question provided]";
+
+    console.log(`  [LLM] Generating answer...`);
+    answer = await generateAnswer({
+      model: testRun.llmModel,
+      prompt: testRun.prompt,
+      question: questionForScoring,
+      context: contextData,
+      temperature: testRun.temperature,
+      topP: testRun.topP,
+      topK: testRun.topK,
+    });
+  }
 
   console.log(`  [LLM] Answer generated: ${answer.length} chars`);
 
-  // 2. Calculate all scores
+  // 2. Calculate all scores (using TestRun's judge config if set)
+  // Pass context so LLM judge can evaluate if answer correctly uses available information
   console.log(`  [Scoring] Calculating scores...`);
   const scores = await calculateScores({
     generatedAnswer: answer,
     expectedAnswer: testCase.expectedAnswer,
-    question: questionText,
+    question: questionForScoring,
+    context: contextData,
     model: testRun.llmModel,
+    judgeModel: testRun.llmJudgeModel,
+    judgePrompt: testRun.llmJudgePrompt,
   });
 
   console.log(`  [Scoring] BLEU: ${scores.bleu.toFixed(3)}, Cosine: ${scores.cosine.toFixed(3)}, LLM: ${scores.llmScore.toFixed(3)}`);
@@ -234,9 +274,11 @@ export async function processTestRunBySuiteId(
     temperature: number;
     topP: number;
     topK: number;
+    llmJudgeModel?: string | null;
+    llmJudgePrompt?: string | null;
   }
 ): Promise<string> {
-  // Create a new TestRun
+  // Create a new TestRun with status PENDING
   const testRun = await prisma.testRun.create({
     data: {
       suiteId,
@@ -245,6 +287,9 @@ export async function processTestRunBySuiteId(
       temperature: params.temperature,
       topP: params.topP,
       topK: params.topK,
+      llmJudgeModel: params.llmJudgeModel ?? null,
+      llmJudgePrompt: params.llmJudgePrompt ?? null,
+      status: "PENDING",
     },
   });
 

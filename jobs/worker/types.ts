@@ -51,7 +51,11 @@ export type ScoreInput = {
   generatedAnswer: string;
   expectedAnswer: string;
   question: string;
-  model: string; // For LLM-as-judge
+  context: string; // Context used to generate the answer (for LLM judge)
+  model: string; // For LLM-as-judge (deprecated, use judgeModel)
+  // Optional: Override judge config from TestRun (falls back to env)
+  judgeModel?: string | null;
+  judgePrompt?: string | null;
 };
 
 // Result from scoring
@@ -87,8 +91,10 @@ export type ModelConfig = {
 };
 
 // Job data passed from queue
+// Either testRunId (direct) or suiteId (creates TestRun with defaults)
 export type TestRunJobData = {
-  testRunId: string;
+  testRunId?: string;
+  suiteId?: string;
 };
 
 // PDF context for multimodal LLMs
