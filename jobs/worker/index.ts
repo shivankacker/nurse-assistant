@@ -5,14 +5,17 @@
  * 1. Loading test run data with all relations
  * 2. Status management (PENDING -> RUNNING -> COMPLETED/FAILED)
  * 3. PDF context loading
- * 4. LLM answer generation for each test case
+ * 4. LLM answer generation via Realtime API (text or audio input)
  * 5. Score calculation (BLEU, Cosine, LLM-as-judge)
  * 6. Result persistence
+ *
+ * Uses OpenAI Realtime API for answer generation to match the main
+ * application's behavior, supporting both text and audio questions.
  */
 import prisma from "@/prisma/prisma";
 import pLimit from "p-limit";
 import { loadContexts } from "./services/pdf";
-import { generateAnswer } from "./services/llm";
+import { generateAnswerRealtime } from "./services/realtime";
 import { calculateScores } from "./services/scoring";
 import type {
   TestRunWithRelations,
@@ -44,7 +47,8 @@ export async function processTestRun(testRunId: string): Promise<void> {
   }
 
   console.log(`[Worker] Suite: ${testRun.suite.name}`);
-  console.log(`[Worker] Model: ${testRun.llmModel}`);
+  console.log(`[Worker] Model: Realtime API (gpt-realtime)`);
+  console.log(`[Worker] Prompt: "${testRun.prompt.slice(0, 50)}..."`);
   console.log(`[Worker] Test cases: ${testRun.suite.testCases.length}`);
   console.log(`[Worker] Contexts: ${testRun.suite.contexts.length}`);
 
@@ -122,20 +126,34 @@ async function fetchTestRunWithRelations(
 }
 
 /**
- * Get the question text from a test case (supports multimodal)
+ * Get the question text from a test case for logging/scoring
+ * Audio questions will be transcribed by the Realtime API
  */
 function getQuestionText(testCase: TestCaseData): string {
-  // For now, prioritize text question. Audio/image support can be added later.
   if (testCase.questionText) {
     return testCase.questionText;
   }
   if (testCase.questionAudioPath) {
-    return `[Audio question: ${testCase.questionAudioPath}]`;
+    // Will be transcribed by Realtime API
+    return `[Audio: ${testCase.questionAudioPath}]`;
   }
   if (testCase.questionImagePath) {
-    return `[Image question: ${testCase.questionImagePath}]`;
+    return `[Image: ${testCase.questionImagePath}]`;
   }
   return "[No question provided]";
+}
+
+/**
+ * Determine input type for a test case
+ */
+function getInputType(testCase: TestCaseData): "text" | "audio" | "none" {
+  if (testCase.questionAudioPath && testCase.questionAudioPath.trim() !== "") {
+    return "audio";
+  }
+  if (testCase.questionText && testCase.questionText.trim() !== "") {
+    return "text";
+  }
+  return "none";
 }
 
 /**
@@ -175,35 +193,48 @@ async function processTestCaseSafe(
 }
 
 /**
- * Process a single test case
+ * Process a single test case using Realtime API
+ *
+ * Supports both text and audio questions, matching the main app's behavior.
  */
 async function processTestCase(
   testRun: TestRunWithRelations,
   testCase: TestCaseData,
   contextData: string
 ): Promise<TestRunResultInput> {
-  const questionText = getQuestionText(testCase);
+  const inputType = getInputType(testCase);
+  const questionDisplay = getQuestionText(testCase);
 
-  // 1. Generate LLM answer
-  console.log(`  [LLM] Generating answer...`);
-  const answer = await generateAnswer({
-    model: testRun.llmModel,
+  if (inputType === "none") {
+    throw new Error("Test case has no question (text or audio)");
+  }
+
+  // 1. Generate answer via Realtime API
+  console.log(`  [Realtime] Generating answer (${inputType} input)...`);
+
+  const result = await generateAnswerRealtime({
     prompt: testRun.prompt,
-    question: questionText,
     context: contextData,
-    temperature: testRun.temperature,
-    topP: testRun.topP,
-    topK: testRun.topK,
+    questionText: testCase.questionText,
+    questionAudioPath: testCase.questionAudioPath,
   });
 
-  console.log(`  [LLM] Answer generated: ${answer.length} chars`);
+  const answer = result.answer;
+
+  // For audio input, use the transcription as the question text for scoring
+  const questionForScoring = result.inputTranscript || questionDisplay;
+
+  console.log(`  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`);
+  if (result.inputTranscript) {
+    console.log(`  [Realtime] Audio transcribed: "${result.inputTranscript.slice(0, 50)}..."`);
+  }
 
   // 2. Calculate all scores
   console.log(`  [Scoring] Calculating scores...`);
   const scores = await calculateScores({
     generatedAnswer: answer,
     expectedAnswer: testCase.expectedAnswer,
-    question: questionText,
+    question: questionForScoring,
     model: testRun.llmModel,
   });
 
