@@ -12,32 +12,24 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { ModeToggle } from "./theme-toggle";
 import Link from "next/link";
 import { API } from "@/utils/api";
 import { ChatSerialized } from "@/utils/schemas/chat";
+import { useQuery } from "@tanstack/react-query";
 
 export function MainSidebar({
   ...props
 }: React.ComponentProps<typeof Sidebar>) {
-  const [chats, setChats] = React.useState<ChatSerialized[]>([]);
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    async function fetchChats() {
-      try {
-        const response = await API.chats.list({ limit: 50, offset: 0 });
-        setChats(response.results);
-      } catch (error) {
-        console.error("Failed to fetch chats:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchChats();
-  }, []);
+  const { data: chats = [], isLoading: loading } = useQuery({
+    queryKey: ["chats"],
+    queryFn: async () => {
+      const response = await API.chats.list({ limit: 50, offset: 0 });
+      return response.results;
+    },
+  });
 
   return (
     <Sidebar collapsible="icon" {...props}>

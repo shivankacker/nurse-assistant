@@ -9,6 +9,26 @@ import {
 import prisma from "@/prisma/prisma";
 
 export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const current = url.searchParams.get("current");
+
+  // If requesting current project, return it directly
+  if (current === "true") {
+    const currentProject = await prisma.project.findFirst({
+      where: { current: true },
+      include: {
+        prompt: true,
+        contexts: true,
+      },
+    });
+
+    if (!currentProject) {
+      return NextResponse.json([]);
+    }
+
+    return NextResponse.json([projectSerializer(currentProject)]);
+  }
+
   const queryParams = parseQueryParams(request, limitOffsetSchema);
 
   if (!queryParams.success) {
