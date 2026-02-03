@@ -36,8 +36,8 @@ model TestCase {
 model Context {
   id         String      @id @default(cuid())
   name       String
-  text       String?
-  filePath   String?
+  text       String
+  filePath   String
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   testSuites TestSuite[]

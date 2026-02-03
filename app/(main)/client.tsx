@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { getEncoding } from "js-tiktoken";
 import { ProjectSerialized } from "@/utils/schemas/project";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,6 +56,7 @@ export default function Client(props: {
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
   const [contexts, setContexts] = useState<ContextSerialized[]>([]);
+  const [tokenCount, setTokenCount] = useState(0);
 
   const sessionRef = useRef<RealtimeSession | null>(null);
   const agentRef = useRef<RealtimeAgent | null>(null);
@@ -66,11 +68,63 @@ export default function Client(props: {
     content: string;
   } | null>(null);
   const isSpeakingRef = useRef(false);
-  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // Get the context limit for the realtime model (use 90% of actual limit)
+  const contextLimit = useMemo(() => {
+    const realtimeModel = Object.entries(LLMS).find(
+      ([_, config]) => config.realtime,
+    );
+    const actualLimit = realtimeModel ? realtimeModel[1].contextLimit : 32_000;
+    return Math.floor(actualLimit * 0.9);
+  }, []);
+
+  // Track if conversation limit is reached
+  const [isLimitReached, setIsLimitReached] = useState(false);
+
+  // Build instructions string (same as what's sent to the model)
+  const instructions = useMemo(() => {
+    return `${props.defaultProject.prompt.content}\n\nPatient Information:\n${PATIENT_INFO}\n\nContext:\n${props.defaultProject.contexts
+      .map(
+        (c, idx) =>
+          `==== START CONTEXT ${idx + 1} : ${c.name} ====\n${c.text}\n==== END Context ${idx + 1} ====`,
+      )
+      .join("\n\n")}`;
+  }, [props.defaultProject]);
+
+  // Calculate tokens whenever messages or instructions change
+  useEffect(() => {
+    const calculateTokens = () => {
+      try {
+        const enc = getEncoding("cl100k_base");
+        const messagesContent = messages
+          .map((m) => `${m.role}: ${m.content}`)
+          .join("\n");
+        // Include instructions + messages in token count
+        const fullContent = `${instructions}\n\n${messagesContent}`;
+        const tokens = enc.encode(fullContent);
+        const newTokenCount = tokens.length;
+        setTokenCount(newTokenCount);
+
+        // Check if limit is reached and disconnect if so
+        if (newTokenCount >= contextLimit && !isLimitReached) {
+          setIsLimitReached(true);
+          disconnect();
+        }
+      } catch (err) {
+        console.error("Error calculating tokens:", err);
+      }
+    };
+    calculateTokens();
+  }, [messages, instructions, contextLimit, isLimitReached]);
+
+  // Calculate usage percentage
+  const usagePercentage = useMemo(() => {
+    return Math.min((tokenCount / contextLimit) * 100, 100);
+  }, [tokenCount, contextLimit]);
 
   useEffect(() => {
     scrollToBottom();
@@ -108,6 +162,13 @@ export default function Client(props: {
       disconnect();
     };
   }, []);
+
+  // Automatically connect when visiting an existing chat
+  useEffect(() => {
+    if (props.existingChat && !isConnected && !isLoading && !isLimitReached) {
+      connect(true); // Start with mic muted
+    }
+  }, [props.existingChat]);
 
   const createChat = async () => {
     try {
@@ -183,15 +244,6 @@ export default function Client(props: {
 
       const { token } = await tokenResponse.json();
 
-      // Build instructions with project context
-
-      const instructions = `${props.defaultProject.prompt.content}\n\nPatient Information:\n${PATIENT_INFO}\n\nContext:\n${props.defaultProject.contexts
-        .map(
-          (c, idx) =>
-            `==== START CONTEXT ${idx + 1} : ${c.name} ====\n${c.text}\n==== END Context ${idx + 1} ====`,
-        )
-        .join("\n\n")}`;
-
       console.log(instructions);
 
       // Create the agent
@@ -236,27 +288,6 @@ export default function Client(props: {
   };
 
   const setupSessionListeners = (session: RealtimeSession) => {
-    // Access the audio element from the WebRTC transport
-    // The SDK uses an HTMLAudioElement for playback
-    if (session.transport && "audio" in session.transport) {
-      audioElementRef.current = (session.transport as any).audio;
-      const audioEl = audioElementRef.current;
-      if (audioEl) {
-        audioEl.onplay = () => {
-          isSpeakingRef.current = true;
-          setIsSpeaking(true);
-        };
-        audioEl.onpause = () => {
-          isSpeakingRef.current = false;
-          setIsSpeaking(false);
-        };
-        audioEl.onended = () => {
-          isSpeakingRef.current = false;
-          setIsSpeaking(false);
-        };
-      }
-    }
-
     // Listen for streaming transcript deltas from transport layer (for assistant)
     session.transport.on("audio_transcript_delta", (deltaEvent) => {
       if (!isSpeakingRef.current) {
@@ -339,7 +370,7 @@ export default function Client(props: {
       },
     );
 
-    // Listen for history updates - but don't overwrite streaming messages
+    // Listen for history updates - but don't overwrite streaming messages or existing chat messages
     session.on("history_updated", (history) => {
       // Convert history to messages for UI
       const newMessages: Message[] = [];
@@ -369,6 +400,11 @@ export default function Client(props: {
 
       // Only update if we're not actively streaming, or merge with streaming content
       setMessages((prev) => {
+        // Don't clear existing messages if history is empty (e.g., when reconnecting to existing chat)
+        if (newMessages.length === 0 && prev.length > 0) {
+          return prev;
+        }
+
         if (streamingMessageRef.current) {
           const streamingMsg = newMessages.find(
             (msg) => msg.id === streamingMessageRef.current?.itemId,
@@ -489,12 +525,6 @@ export default function Client(props: {
       sessionRef.current = null;
     }
     agentRef.current = null;
-    if (audioElementRef.current) {
-      audioElementRef.current.onplay = null;
-      audioElementRef.current.onpause = null;
-      audioElementRef.current.onended = null;
-    }
-    audioElementRef.current = null;
     setIsConnected(false);
     setIsSpeaking(false);
     setIsListening(false);
@@ -557,9 +587,23 @@ export default function Client(props: {
     const newMutedState = !isSpeakerMuted;
     setIsSpeakerMuted(newMutedState);
 
-    // Actually mute/unmute the audio element
-    if (audioElementRef.current) {
-      audioElementRef.current.muted = newMutedState;
+    // Access the WebRTC transport's connection state to get the peer connection
+    if (sessionRef.current?.transport) {
+      const transport = sessionRef.current.transport as any;
+
+      // The OpenAI SDK stores the peer connection in connectionState.peerConnection
+      const connectionState = transport.connectionState;
+      const peerConnection: RTCPeerConnection | undefined =
+        connectionState?.peerConnection;
+
+      if (peerConnection) {
+        // Mute incoming audio by disabling receiver tracks (this is the speaker output)
+        peerConnection.getReceivers().forEach((receiver: RTCRtpReceiver) => {
+          if (receiver.track && receiver.track.kind === "audio") {
+            receiver.track.enabled = !newMutedState;
+          }
+        });
+      }
     }
   };
 
@@ -567,7 +611,8 @@ export default function Client(props: {
     return contexts.filter((context) => content.includes(context.name));
   };
 
-  const showChatbox = isConnected && messages.length > 0;
+  const showChatbox =
+    (isConnected || props.existingChat) && messages.length > 0;
 
   return (
     <div className="relative h-[calc(100vh-2rem)] w-full overflow-hidden">
@@ -639,77 +684,134 @@ export default function Client(props: {
           </div>
 
           {/* Control Buttons and Input */}
-          <div className="p-6 flex gap-3 justify-center items-end w-full max-w-2xl">
-            {/* Text Input Container */}
-            <div className="flex-1 bg-background rounded-2xl border border-sidebar-border">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Type a message or speak..."
-                disabled={isLoading}
-                className="min-h-15 max-h-50 resize-none border-0 outline-0 p-4 bg-transparent w-full"
-                rows={1}
-              />
-              <div className="flex gap-2 px-4 pb-4 justify-end">
-                {!isConnected && (
+          <div className="p-6 flex flex-col gap-2 justify-center items-center w-full max-w-2xl">
+            <div className="flex gap-3 w-full items-end">
+              {/* Text Input Container */}
+              <div className="flex-1 bg-background rounded-2xl border border-sidebar-border">
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder={
+                    isLimitReached
+                      ? "Conversation limit reached"
+                      : "Type a message or speak..."
+                  }
+                  disabled={isLoading || isLimitReached}
+                  className="min-h-15 max-h-50 resize-none border-0 outline-0 p-4 bg-transparent w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  rows={1}
+                />
+                <div className="flex gap-2 px-4 pb-4 justify-end items-center">
+                  {/* Token Usage Pie Chart - Only show when there are messages */}
+                  {messages.length > 0 && (
+                    <div
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                      title={`${tokenCount.toLocaleString()} / ${contextLimit.toLocaleString()} tokens`}
+                    >
+                      <svg className="h-5 w-5 -rotate-90" viewBox="0 0 20 20">
+                        <circle
+                          cx="10"
+                          cy="10"
+                          r="8"
+                          fill="transparent"
+                          className="stroke-muted"
+                          strokeWidth="3"
+                        />
+                        <circle
+                          cx="10"
+                          cy="10"
+                          r="8"
+                          fill="transparent"
+                          className={cn(
+                            "transition-all duration-300",
+                            usagePercentage >= 100
+                              ? "stroke-red-500"
+                              : usagePercentage > 90
+                                ? "stroke-red-500"
+                                : usagePercentage > 70
+                                  ? "stroke-yellow-500"
+                                  : "stroke-primary",
+                          )}
+                          strokeWidth="3"
+                          strokeDasharray={`${(usagePercentage / 100) * 50.27} 50.27`}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span
+                        className={cn(
+                          isLimitReached && "text-red-500 font-medium",
+                        )}
+                      >
+                        {usagePercentage.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  {!isConnected && !isLimitReached && (
+                    <Button
+                      onClick={() => connect(false)}
+                      variant="outline"
+                      size="icon"
+                      className="h-10 w-10"
+                      disabled={isLoading}
+                      title="Connect voice"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <Mic className="h-5 w-5 opacity-50" />
+                      )}
+                    </Button>
+                  )}
                   <Button
-                    onClick={() => connect(false)}
-                    variant="outline"
+                    onClick={sendTextMessage}
+                    disabled={isLoading || !inputText.trim() || isLimitReached}
                     size="icon"
                     className="h-10 w-10"
-                    disabled={isLoading}
-                    title="Connect voice"
+                    title="Send message"
                   >
-                    {isLoading ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
+                    <Send className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Mute Buttons - Only show when connected */}
+              {isConnected && (
+                <div className="flex flex-col gap-2 h-full">
+                  <Button
+                    onClick={toggleMicMute}
+                    variant={isMicMuted ? "destructive" : "outline"}
+                    size="icon"
+                    className="flex-1 w-15 h-15 aspect-square rounded-full"
+                    title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                  >
+                    {isMicMuted ? (
+                      <MicOff className="h-5 w-5" />
                     ) : (
-                      <Mic className="h-5 w-5 opacity-50" />
+                      <Mic className="h-5 w-5" />
                     )}
                   </Button>
-                )}
-                <Button
-                  onClick={sendTextMessage}
-                  disabled={isLoading || !inputText.trim()}
-                  size="icon"
-                  className="h-10 w-10"
-                  title="Send message"
-                >
-                  <Send className="h-5 w-5" />
-                </Button>
-              </div>
+                  <Button
+                    onClick={toggleSpeakerMute}
+                    variant={isSpeakerMuted ? "destructive" : "outline"}
+                    size="icon"
+                    className="flex-1 w-15 h-15 aspect-square rounded-full"
+                    title={isSpeakerMuted ? "Unmute sound" : "Mute sound"}
+                  >
+                    {isSpeakerMuted ? (
+                      <VolumeX className="h-5 w-5" />
+                    ) : (
+                      <Volume2 className="h-5 w-5" />
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
-
-            {/* Mute Buttons - Only show when connected */}
-            {isConnected && (
-              <div className="flex flex-col gap-2 h-full">
-                <Button
-                  onClick={toggleMicMute}
-                  variant={isMicMuted ? "destructive" : "outline"}
-                  size="icon"
-                  className="flex-1 w-15 h-15 aspect-square rounded-full"
-                  title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
-                >
-                  {isMicMuted ? (
-                    <MicOff className="h-5 w-5" />
-                  ) : (
-                    <Mic className="h-5 w-5" />
-                  )}
-                </Button>
-                <Button
-                  onClick={toggleSpeakerMute}
-                  variant={isSpeakerMuted ? "destructive" : "outline"}
-                  size="icon"
-                  className="flex-1 w-15 h-15 aspect-square rounded-full"
-                  title={isSpeakerMuted ? "Unmute sound" : "Mute sound"}
-                >
-                  {isSpeakerMuted ? (
-                    <VolumeX className="h-5 w-5" />
-                  ) : (
-                    <Volume2 className="h-5 w-5" />
-                  )}
-                </Button>
-              </div>
+            {/* Limit Reached Error Message */}
+            {isLimitReached && (
+              <p className="text-sm text-red-500 text-center">
+                Conversation limit reached, please create a new thread to
+                continue
+              </p>
             )}
           </div>
         </div>
@@ -765,7 +867,7 @@ export default function Client(props: {
                                   key={context.id}
                                   variant="outline"
                                 >
-                                  <Link href={`/context/${context.id}`}>
+                                  <Link href={`/files/${context.filePath}`}>
                                     📄 {context.name}
                                   </Link>
                                 </Badge>
