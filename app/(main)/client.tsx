@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { getEncoding } from "js-tiktoken";
 import { ProjectSerialized } from "@/utils/schemas/project";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Mic,
   MicOff,
@@ -62,7 +61,6 @@ export default function Client(props: {
   const agentRef = useRef<RealtimeAgent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldCreateChatRef = useRef(false);
-  const pendingMessagesRef = useRef<{ user: string; assistant: string }[]>([]);
   const streamingMessageRef = useRef<{
     itemId: string;
     content: string;
@@ -441,7 +439,7 @@ export default function Client(props: {
       // Get the latest history to find user and assistant messages
       const history = session.history;
       let userText = "";
-      let assistantText = output;
+      const assistantText = output;
 
       // Find the last user message
       for (let i = history.length - 1; i >= 0; i--) {
@@ -465,17 +463,26 @@ export default function Client(props: {
       }
     });
 
-    // Listen for when assistant stops speaking
+    // Listen for when assistant transcript is done (text generation complete)
     session.transport.on("audio_transcript_done", (event: any) => {
-      isSpeakingRef.current = false;
-      setIsSpeaking(false);
       streamingMessageRef.current = null;
     });
 
-    // Also listen for response.done to ensure speaking state is cleared
-    session.transport.on("response.done", (event: any) => {
+    // Listen for when audio playback has actually finished
+    // This event fires when the voice modality audio has stopped playing
+    session.transport.on("output_audio_buffer.stopped", (event: any) => {
       isSpeakingRef.current = false;
       setIsSpeaking(false);
+    });
+
+    // Fallback: Also listen for response.done in case output_audio_buffer.stopped doesn't fire
+    // (e.g., for text-only responses)
+    session.transport.on("response.done", (event: any) => {
+      // Only clear speaking state if there's no audio being played
+      // The output_audio_buffer.stopped will handle it otherwise
+      if (!isSpeakingRef.current) {
+        setIsSpeaking(false);
+      }
     });
 
     // Listen for audio interruptions
@@ -865,9 +872,13 @@ export default function Client(props: {
                                 <Badge
                                   asChild
                                   key={context.id}
-                                  variant="outline"
+                                  variant={"link"}
+                                  className="underline"
                                 >
-                                  <Link href={`/files/${context.filePath}`}>
+                                  <Link
+                                    href={`/files/${context.filePath}`}
+                                    target="_blank"
+                                  >
                                     📄 {context.name}
                                   </Link>
                                 </Badge>

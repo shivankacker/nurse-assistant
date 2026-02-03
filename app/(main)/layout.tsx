@@ -15,7 +15,7 @@ export default async function Layout({
           className="inset-0 absolute"
           style={{
             background:
-              "linear-gradient(color-mix(in srgb, var(--color-background) 60%, transparent), color-mix(in srgb, var(--color-background) 60%, transparent)), url('/blurred_2.png')",
+              "linear-gradient(color-mix(in srgb, var(--color-background) 40%, transparent), color-mix(in srgb, var(--color-background) 40%, transparent)), url('/blurred.png')",
             backgroundSize: "cover",
             backgroundPosition: "center",
           }}
