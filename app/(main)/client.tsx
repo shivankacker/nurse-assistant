@@ -26,7 +26,7 @@ import { ContextSerialized } from "@/utils/schemas/context";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
 import Link from "next/link";
-import { PATIENT_INFO } from "@/utils/constants";
+import { LLMS, PATIENT_INFO } from "@/utils/constants";
 
 interface Message {
   id?: string;
@@ -204,7 +204,9 @@ export default function Client(props: {
 
       // Create session with WebRTC transport (auto-configured in browser)
       const session = new RealtimeSession(agent, {
-        model: "gpt-realtime",
+        model: Object.keys(LLMS)
+          .find((key) => LLMS[key as keyof typeof LLMS].realtime)
+          ?.split(":")[1],
         transport: "webrtc", // SDK will auto-configure microphone and speakers
       });
 
@@ -257,7 +259,6 @@ export default function Client(props: {
 
     // Listen for streaming transcript deltas from transport layer (for assistant)
     session.transport.on("audio_transcript_delta", (deltaEvent) => {
-      console.log("Transcript delta:", deltaEvent);
       if (!isSpeakingRef.current) {
         isSpeakingRef.current = true;
         setIsSpeaking(true);
@@ -303,13 +304,11 @@ export default function Client(props: {
 
     // Listen for when user starts speaking (audio buffer start)
     session.transport.on("input_audio_buffer.speech_started", (event: any) => {
-      console.log("User started speaking:", event);
       setIsListening(true);
     });
 
     // Listen for when user stops speaking (audio buffer end)
     session.transport.on("input_audio_buffer.speech_stopped", (event: any) => {
-      console.log("User stopped speaking:", event);
       setIsListening(false);
     });
 
@@ -317,7 +316,6 @@ export default function Client(props: {
     session.transport.on(
       "conversation.item.input_audio_transcription.completed",
       (event: any) => {
-        console.log("User transcription completed:", event);
         setIsListening(false);
 
         setMessages((prev) => {
@@ -343,8 +341,6 @@ export default function Client(props: {
 
     // Listen for history updates - but don't overwrite streaming messages
     session.on("history_updated", (history) => {
-      console.log("History updated:", history);
-
       // Convert history to messages for UI
       const newMessages: Message[] = [];
 
@@ -406,8 +402,6 @@ export default function Client(props: {
 
     // When agent ends, save the conversation
     session.on("agent_end", async (context, agent, output) => {
-      console.log("Agent ended with output:", output);
-
       // Get the latest history to find user and assistant messages
       const history = session.history;
       let userText = "";
@@ -437,7 +431,6 @@ export default function Client(props: {
 
     // Listen for when assistant stops speaking
     session.transport.on("audio_transcript_done", (event: any) => {
-      console.log("Assistant audio transcript done:", event);
       isSpeakingRef.current = false;
       setIsSpeaking(false);
       streamingMessageRef.current = null;
@@ -445,21 +438,18 @@ export default function Client(props: {
 
     // Also listen for response.done to ensure speaking state is cleared
     session.transport.on("response.done", (event: any) => {
-      console.log("Response done:", event);
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     });
 
     // Listen for audio interruptions
     session.transport.on("conversation.interrupted", () => {
-      console.log("Assistant was interrupted");
       isSpeakingRef.current = false;
       setIsSpeaking(false);
     });
 
     // Handle errors
     session.on("error", (errorEvent) => {
-      console.error("Session error:", errorEvent);
       setError(
         errorEvent.error instanceof Error
           ? errorEvent.error.message
@@ -576,8 +566,6 @@ export default function Client(props: {
   const findReferencedContexts = (content: string): ContextSerialized[] => {
     return contexts.filter((context) => content.includes(context.name));
   };
-
-  console.log(isSpeaking);
 
   const showChatbox = isConnected && messages.length > 0;
 

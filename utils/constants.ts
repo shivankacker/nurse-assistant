@@ -1,9 +1,18 @@
 export const LLMS = {
   "openai:gpt-5-mini-2025-08-07": {
     name: "GPT-5 Mini",
+    realtime: false,
+    contextLimit: 400_000,
   },
   "openai:gpt-5.2-2025-12-11": {
     name: "GPT-5.2",
+    realtime: false,
+    contextLimit: 400_000,
+  },
+  "openai:gpt-realtime-2025-08-28": {
+    name: "GPT Realtime",
+    realtime: true,
+    contextLimit: 32_000,
   },
 } as const;
 

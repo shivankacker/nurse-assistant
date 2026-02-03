@@ -1,3 +1,4 @@
+import { LLMS } from "@/utils/constants";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
@@ -28,7 +29,10 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           session: {
             type: "realtime",
-            model: "gpt-realtime",
+            model:
+              Object.keys(LLMS)
+                .find((key) => LLMS[key as keyof typeof LLMS].realtime)
+                ?.split(":")[1] || "NA",
           },
         }),
       },
