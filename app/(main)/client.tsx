@@ -85,13 +85,15 @@ export default function Client(props: {
 
   // Build instructions string (same as what's sent to the model)
   const instructions = useMemo(() => {
-    return `${props.defaultProject.prompt.content}\n\nPatient Information:\n${PATIENT_INFO}\n\nContext:\n${props.defaultProject.contexts
+    return `${props.defaultProject.prompt.content}\n\nContext:\n${props.defaultProject.contexts
       .map(
         (c, idx) =>
           `==== START CONTEXT ${idx + 1} : ${c.name} ====\n${c.text}\n==== END Context ${idx + 1} ====`,
       )
       .join("\n\n")}`;
   }, [props.defaultProject]);
+
+  console.log("Instructions:", instructions);
 
   // Calculate tokens whenever messages or instructions change
   useEffect(() => {
@@ -248,6 +250,7 @@ export default function Client(props: {
       const agent = new RealtimeAgent({
         name: "Assistant",
         instructions: instructions,
+        voice: "shimmer",
       });
 
       agentRef.current = agent;
