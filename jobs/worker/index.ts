@@ -13,9 +13,11 @@
  * application's behavior, supporting both text and audio questions.
  */
 import prisma from "@/prisma/prisma";
+import { LLMS } from "@/utils/constants";
 import pLimit from "p-limit";
 import { loadContexts } from "./services/pdf";
 import { generateAnswerRealtime } from "./services/realtime";
+import { generateAnswer } from "./services/llm";
 import { calculateScores } from "./services/scoring";
 import type {
   TestRunWithRelations,
@@ -47,7 +49,11 @@ export async function processTestRun(testRunId: string): Promise<void> {
   }
 
   console.log(`[Worker] Suite: ${testRun.suite.name}`);
-  console.log(`[Worker] Model: Realtime API (gpt-realtime)`);
+  const modelConfig = LLMS[testRun.llmModel as keyof typeof LLMS];
+  const selectedTextTransport = modelConfig?.textTransport || "vercel";
+  console.log(
+    `[Worker] Model: ${testRun.llmModel} (text via ${selectedTextTransport}, audio via realtime)`
+  );
   console.log(`[Worker] Prompt: "${testRun.prompt.slice(0, 50)}..."`);
   console.log(`[Worker] Test cases: ${testRun.suite.testCases.length}`);
   console.log(`[Worker] Contexts: ${testRun.suite.contexts.length}`);
@@ -209,24 +215,65 @@ async function processTestCase(
     throw new Error("Test case has no question (text or audio)");
   }
 
-  // 1. Generate answer via Realtime API
-  console.log(`  [Realtime] Generating answer (${inputType} input)...`);
+  // 1. Generate answer (audio always via Realtime; text via Realtime only when selected)
+  const modelConfig = LLMS[testRun.llmModel as keyof typeof LLMS];
+  const selectedTextTransport = modelConfig?.textTransport || "vercel";
 
-  const result = await generateAnswerRealtime({
-    prompt: testRun.prompt,
-    context: contextData,
-    questionText: testCase.questionText,
-    questionAudioPath: testCase.questionAudioPath,
-  });
+  let answer: string;
+  let questionForScoring: string = questionDisplay;
 
-  const answer = result.answer;
+  if (inputType === "audio") {
+    console.log(`  [Realtime] Generating answer (audio input)...`);
+    const result = await generateAnswerRealtime({
+      prompt: testRun.prompt,
+      context: contextData,
+      questionText: testCase.questionText,
+      questionAudioPath: testCase.questionAudioPath,
+    });
 
-  // For audio input, use the transcription as the question text for scoring
-  const questionForScoring = result.inputTranscript || questionDisplay;
+    answer = result.answer;
+    // For audio input, use the transcription as the question text for scoring
+    questionForScoring = result.inputTranscript || questionDisplay;
 
-  console.log(`  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`);
-  if (result.inputTranscript) {
-    console.log(`  [Realtime] Audio transcribed: "${result.inputTranscript.slice(0, 50)}..."`);
+    console.log(
+      `  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`
+    );
+    if (result.inputTranscript) {
+      console.log(`  [Realtime] Audio transcribed: "${result.inputTranscript.slice(0, 50)}..."`);
+    }
+  } else {
+    if (selectedTextTransport === "realtime") {
+      console.log(`  [Realtime] Generating answer (text input)...`);
+      const result = await generateAnswerRealtime({
+        prompt: testRun.prompt,
+        context: contextData,
+        questionText: testCase.questionText,
+        questionAudioPath: null,
+      });
+      answer = result.answer;
+      questionForScoring = testCase.questionText || questionDisplay;
+      console.log(
+        `  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`
+      );
+    } else {
+      if (!testCase.questionText || !testCase.questionText.trim()) {
+        throw new Error("Text test case is missing questionText");
+      }
+
+      console.log(`  [Vercel AI] Generating answer (text input)...`);
+      const start = Date.now();
+      answer = await generateAnswer({
+        model: testRun.llmModel,
+        prompt: testRun.prompt,
+        question: testCase.questionText,
+        context: contextData,
+        temperature: testRun.temperature,
+        topP: testRun.topP,
+        topK: testRun.topK,
+      });
+      questionForScoring = testCase.questionText;
+      console.log(`  [Vercel AI] Answer generated: ${answer.length} chars in ${Date.now() - start}ms`);
+    }
   }
 
   // 2. Calculate all scores
