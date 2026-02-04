@@ -85,7 +85,7 @@ export default function Client(props: {
 
   // Build instructions string (same as what's sent to the model)
   const instructions = useMemo(() => {
-    return `${props.defaultProject.prompt.content}\n\nContext:\n${props.defaultProject.contexts
+    return `${props.defaultProject.prompt.content}\n\nPatient Data:\n${PATIENT_INFO}\n\nContext:\n${props.defaultProject.contexts
       .map(
         (c, idx) =>
           `==== START CONTEXT ${idx + 1} : ${c.name} ====\n${c.text}\n==== END Context ${idx + 1} ====`,
