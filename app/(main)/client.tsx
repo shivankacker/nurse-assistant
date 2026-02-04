@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { getEncoding } from "js-tiktoken";
 import { ProjectSerialized } from "@/utils/schemas/project";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Mic,
   MicOff,
@@ -12,12 +12,21 @@ import {
   AlertCircle,
   Volume2,
   VolumeX,
+  MessageSquare,
+  Plus,
 } from "lucide-react";
-import { ChatMessageSerialized, ChatSerialized } from "@/utils/schemas/chat";
+import { Persona } from "@/components/ai-elements/persona";
+import { ChatSerialized } from "@/utils/schemas/chat";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { RealtimeAgent } from "@openai/agents/realtime";
 import { RealtimeSession } from "@openai/agents/realtime";
+import { Badge } from "@/components/ui/badge";
+import { ContextSerialized } from "@/utils/schemas/context";
+import { cn } from "@/lib/utils";
+import { useSidebar } from "@/components/ui/sidebar";
+import Link from "next/link";
+import { LLMS, PATIENT_INFO } from "@/utils/constants";
 
 interface Message {
   id?: string;
@@ -32,6 +41,7 @@ export default function Client(props: {
 }) {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const { toggleSidebar } = useSidebar();
   const [chat, setChat] = useState<ChatSerialized | null>(
     props.existingChat || null,
   );
@@ -39,24 +49,82 @@ export default function Client(props: {
   const [inputText, setInputText] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+  const [contexts, setContexts] = useState<ContextSerialized[]>([]);
+  const [tokenCount, setTokenCount] = useState(0);
 
   const sessionRef = useRef<RealtimeSession | null>(null);
   const agentRef = useRef<RealtimeAgent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const shouldCreateChatRef = useRef(false);
-  const pendingMessagesRef = useRef<{ user: string; assistant: string }[]>([]);
   const streamingMessageRef = useRef<{
     itemId: string;
     content: string;
   } | null>(null);
+  const isSpeakingRef = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // Get the context limit for the realtime model (use 90% of actual limit)
+  const contextLimit = useMemo(() => {
+    const realtimeModel = Object.entries(LLMS).find(
+      ([_, config]) => config.realtime,
+    );
+    const actualLimit = realtimeModel ? realtimeModel[1].contextLimit : 32_000;
+    return Math.floor(actualLimit * 0.9);
+  }, []);
+
+  // Track if conversation limit is reached
+  const [isLimitReached, setIsLimitReached] = useState(false);
+
+  // Build instructions string (same as what's sent to the model)
+  const instructions = useMemo(() => {
+    return `${props.defaultProject.prompt.content}\n\nContext:\n${props.defaultProject.contexts
+      .map(
+        (c, idx) =>
+          `==== START CONTEXT ${idx + 1} : ${c.name} ====\n${c.text}\n==== END Context ${idx + 1} ====`,
+      )
+      .join("\n\n")}`;
+  }, [props.defaultProject]);
+
+  console.log("Instructions:", instructions);
+
+  // Calculate tokens whenever messages or instructions change
+  useEffect(() => {
+    const calculateTokens = () => {
+      try {
+        const enc = getEncoding("cl100k_base");
+        const messagesContent = messages
+          .map((m) => `${m.role}: ${m.content}`)
+          .join("\n");
+        // Include instructions + messages in token count
+        const fullContent = `${instructions}\n\n${messagesContent}`;
+        const tokens = enc.encode(fullContent);
+        const newTokenCount = tokens.length;
+        setTokenCount(newTokenCount);
+
+        // Check if limit is reached and disconnect if so
+        if (newTokenCount >= contextLimit && !isLimitReached) {
+          setIsLimitReached(true);
+          disconnect();
+        }
+      } catch (err) {
+        console.error("Error calculating tokens:", err);
+      }
+    };
+    calculateTokens();
+  }, [messages, instructions, contextLimit, isLimitReached]);
+
+  // Calculate usage percentage
+  const usagePercentage = useMemo(() => {
+    return Math.min((tokenCount / contextLimit) * 100, 100);
+  }, [tokenCount, contextLimit]);
 
   useEffect(() => {
     scrollToBottom();
@@ -76,10 +144,31 @@ export default function Client(props: {
       setMessages(loadedMessages);
     }
 
+    // Fetch all contexts from the database
+    const fetchContexts = async () => {
+      try {
+        const response = await fetch("/api/context");
+        if (response.ok) {
+          const data = await response.json();
+          setContexts(data);
+        }
+      } catch (err) {
+        console.error("Error fetching contexts:", err);
+      }
+    };
+    fetchContexts();
+
     return () => {
       disconnect();
     };
   }, []);
+
+  // Automatically connect when visiting an existing chat
+  useEffect(() => {
+    if (props.existingChat && !isConnected && !isLoading && !isLimitReached) {
+      connect(true); // Start with mic muted
+    }
+  }, [props.existingChat]);
 
   const createChat = async () => {
     try {
@@ -155,23 +244,22 @@ export default function Client(props: {
 
       const { token } = await tokenResponse.json();
 
-      // Build instructions with project context
-      const contextTexts = props.defaultProject.contexts
-        .map((c) => c.text)
-        .join("\n\n");
-      const instructions = `${props.defaultProject.prompt.content}\n\nContext:\n${contextTexts}`;
+      console.log(instructions);
 
       // Create the agent
       const agent = new RealtimeAgent({
         name: "Assistant",
         instructions: instructions,
+        voice: "shimmer",
       });
 
       agentRef.current = agent;
 
       // Create session with WebRTC transport (auto-configured in browser)
       const session = new RealtimeSession(agent, {
-        model: "gpt-realtime",
+        model: Object.keys(LLMS)
+          .find((key) => LLMS[key as keyof typeof LLMS].realtime)
+          ?.split(":")[1],
         transport: "webrtc", // SDK will auto-configure microphone and speakers
       });
 
@@ -203,7 +291,10 @@ export default function Client(props: {
   const setupSessionListeners = (session: RealtimeSession) => {
     // Listen for streaming transcript deltas from transport layer (for assistant)
     session.transport.on("audio_transcript_delta", (deltaEvent) => {
-      console.log("Transcript delta:", deltaEvent);
+      if (!isSpeakingRef.current) {
+        isSpeakingRef.current = true;
+        setIsSpeaking(true);
+      }
 
       // Initialize or update streaming message
       if (
@@ -220,6 +311,8 @@ export default function Client(props: {
 
       // Update messages with streaming content
       setMessages((prev) => {
+        if (!streamingMessageRef.current) return prev;
+
         const existing = prev.find((m) => m.id === deltaEvent.itemId);
         if (existing) {
           return prev.map((m) =>
@@ -241,11 +334,21 @@ export default function Client(props: {
       });
     });
 
+    // Listen for when user starts speaking (audio buffer start)
+    session.transport.on("input_audio_buffer.speech_started", (event: any) => {
+      setIsListening(true);
+    });
+
+    // Listen for when user stops speaking (audio buffer end)
+    session.transport.on("input_audio_buffer.speech_stopped", (event: any) => {
+      setIsListening(false);
+    });
+
     // Listen for user audio transcription completion
     session.transport.on(
       "conversation.item.input_audio_transcription.completed",
       (event: any) => {
-        console.log("User transcription completed:", event);
+        setIsListening(false);
 
         setMessages((prev) => {
           const existing = prev.find((m) => m.id === event.item_id);
@@ -268,10 +371,8 @@ export default function Client(props: {
       },
     );
 
-    // Listen for history updates - but don't overwrite streaming messages
+    // Listen for history updates - but don't overwrite streaming messages or existing chat messages
     session.on("history_updated", (history) => {
-      console.log("History updated:", history);
-
       // Convert history to messages for UI
       const newMessages: Message[] = [];
 
@@ -300,20 +401,37 @@ export default function Client(props: {
 
       // Only update if we're not actively streaming, or merge with streaming content
       setMessages((prev) => {
+        // Don't clear existing messages if history is empty (e.g., when reconnecting to existing chat)
+        if (newMessages.length === 0 && prev.length > 0) {
+          return prev;
+        }
+
         if (streamingMessageRef.current) {
+          const streamingMsg = newMessages.find(
+            (msg) => msg.id === streamingMessageRef.current?.itemId,
+          );
+
           // If history has more content than we're currently streaming, update the streaming ref
-          return newMessages.map((msg) => {
+          const updatedMessages = newMessages.map((msg) => {
             if (msg.id === streamingMessageRef.current?.itemId) {
               // If the new content is longer, extend the streaming ref so animation continues
               if (
                 msg.content.length > streamingMessageRef.current!.content.length
               ) {
                 streamingMessageRef.current!.content = msg.content;
+              } else if (msg.content === streamingMessageRef.current!.content) {
+                // Content matches exactly - streaming is complete
+                streamingMessageRef.current = null;
               }
-              return { ...msg, content: streamingMessageRef.current.content };
+              return {
+                ...msg,
+                content: streamingMessageRef.current?.content || msg.content,
+              };
             }
             return msg;
           });
+
+          return updatedMessages;
         }
         return newMessages;
       });
@@ -321,12 +439,10 @@ export default function Client(props: {
 
     // When agent ends, save the conversation
     session.on("agent_end", async (context, agent, output) => {
-      console.log("Agent ended with output:", output);
-
       // Get the latest history to find user and assistant messages
       const history = session.history;
       let userText = "";
-      let assistantText = output;
+      const assistantText = output;
 
       // Find the last user message
       for (let i = history.length - 1; i >= 0; i--) {
@@ -350,33 +466,36 @@ export default function Client(props: {
       }
     });
 
-    // Listen for when assistant starts speaking
-    session.on("audio_start", () => {
-      console.log("Assistant started speaking");
-      setIsSpeaking(true);
-      // Clear previous streaming message
+    // Listen for when assistant transcript is done (text generation complete)
+    session.transport.on("audio_transcript_done", (event: any) => {
       streamingMessageRef.current = null;
     });
 
-    // Listen for when assistant stops speaking
-    session.on("audio_stopped", () => {
-      console.log("Assistant stopped speaking");
+    // Listen for when audio playback has actually finished
+    // This event fires when the voice modality audio has stopped playing
+    session.transport.on("output_audio_buffer.stopped", (event: any) => {
+      isSpeakingRef.current = false;
       setIsSpeaking(false);
-      // Clear streaming ref immediately when audio stops to stop pulsating
-      setTimeout(() => {
-        streamingMessageRef.current = null;
-      }, 100);
+    });
+
+    // Fallback: Also listen for response.done in case output_audio_buffer.stopped doesn't fire
+    // (e.g., for text-only responses)
+    session.transport.on("response.done", (event: any) => {
+      // Only clear speaking state if there's no audio being played
+      // The output_audio_buffer.stopped will handle it otherwise
+      if (!isSpeakingRef.current) {
+        setIsSpeaking(false);
+      }
     });
 
     // Listen for audio interruptions
-    session.on("audio_interrupted", () => {
-      console.log("Assistant was interrupted");
+    session.transport.on("conversation.interrupted", () => {
+      isSpeakingRef.current = false;
       setIsSpeaking(false);
     });
 
     // Handle errors
     session.on("error", (errorEvent) => {
-      console.error("Session error:", errorEvent);
       setError(
         errorEvent.error instanceof Error
           ? errorEvent.error.message
@@ -418,6 +537,7 @@ export default function Client(props: {
     agentRef.current = null;
     setIsConnected(false);
     setIsSpeaking(false);
+    setIsListening(false);
     setIsMicMuted(false);
     setIsSpeakerMuted(false);
     setError(null);
@@ -474,16 +594,67 @@ export default function Client(props: {
   };
 
   const toggleSpeakerMute = () => {
-    setIsSpeakerMuted(!isSpeakerMuted);
-    // Note: Speaker mute would need to be handled at the audio playback level
-    // The SDK doesn't have a built-in speaker mute, so this is a UI state for now
+    const newMutedState = !isSpeakerMuted;
+    setIsSpeakerMuted(newMutedState);
+
+    // Access the WebRTC transport's connection state to get the peer connection
+    if (sessionRef.current?.transport) {
+      const transport = sessionRef.current.transport as any;
+
+      // The OpenAI SDK stores the peer connection in connectionState.peerConnection
+      const connectionState = transport.connectionState;
+      const peerConnection: RTCPeerConnection | undefined =
+        connectionState?.peerConnection;
+
+      if (peerConnection) {
+        // Mute incoming audio by disabling receiver tracks (this is the speaker output)
+        peerConnection.getReceivers().forEach((receiver: RTCRtpReceiver) => {
+          if (receiver.track && receiver.track.kind === "audio") {
+            receiver.track.enabled = !newMutedState;
+          }
+        });
+      }
+    }
   };
 
+  const findReferencedContexts = (content: string): ContextSerialized[] => {
+    return contexts.filter((context) => content.includes(context.name));
+  };
+
+  const showChatbox =
+    (isConnected || props.existingChat) && messages.length > 0;
+
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="relative h-[calc(100vh-2rem)] w-full overflow-hidden">
+      <div className="absolute top-0 left-4 z-40 flex items-center gap-2">
+        {/* Menu Toggle Button */}
+        <Button
+          variant="outline"
+          onClick={toggleSidebar}
+          className=" gap-2"
+          title="Toggle chat history"
+        >
+          <MessageSquare className="h-5 w-5" />
+          <span>Chat History</span>
+        </Button>
+        {(props.existingChat || !!sessionRef.current) && (
+          <Button
+            asChild
+            variant="outline"
+            className="gap-2"
+            title="Toggle chat history"
+          >
+            <Link href={"/"}>
+              <Plus className="h-5 w-5" />
+              <span>New Chat</span>
+            </Link>
+          </Button>
+        )}
+      </div>
+
       {/* Error Banner */}
       {error && (
-        <div className="bg-red-50 border-b border-red-200 px-6 py-3">
+        <div className="absolute top-0 left-0 right-0 z-50 bg-red-50 border-b border-red-200 px-6 py-3">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2 text-red-800">
               <AlertCircle className="h-5 w-5" />
@@ -501,97 +672,96 @@ export default function Client(props: {
         </div>
       )}
 
-      {/* Messages Area and Voice Panel */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Messages Area */}
-        <div
-          className={`flex-1 flex flex-col ${isConnected ? "border-r" : ""}`}
-        >
-          <div className="flex-1 overflow-y-auto px-6 py-6">
-            <div className="max-w-4xl mx-auto space-y-6">
-              {messages.length === 0 ? (
-                <div className="text-center text-muted-foreground py-12">
-                  <p className="text-lg mb-2">No messages yet</p>
-                  <p className="text-sm">
-                    {isConnected
-                      ? "Start speaking or type a message below"
-                      : "Connect to start a conversation"}
-                  </p>
-                </div>
-              ) : (
-                messages.map((msg, idx) => {
-                  const isStreaming =
-                    streamingMessageRef.current?.itemId === msg.id;
-                  return (
-                    <div
-                      key={idx}
-                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                          msg.role === "user"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted"
-                        } ${isStreaming ? "animate-pulse" : ""}`}
-                      >
-                        <p className="text-sm whitespace-pre-wrap">
-                          {isStreaming
-                            ? msg.content.split("").map((char, charIdx) => (
-                                <span
-                                  key={charIdx}
-                                  className="inline-block animate-in fade-in"
-                                  style={{
-                                    animationDuration: "150ms",
-                                    animationDelay: `${charIdx * 20}ms`,
-                                    animationFillMode: "backwards",
-                                  }}
-                                >
-                                  {char === " " ? "\u00A0" : char}
-                                </span>
-                              ))
-                            : msg.content}
-                        </p>
-                        <p className="text-xs opacity-70 mt-1">
-                          {msg.timestamp.toLocaleTimeString()}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })
+      <div className="flex h-full w-full">
+        {/* Main Persona Container */}
+        <div className="flex flex-col h-full flex-1 items-center justify-center transition-all duration-300 ease-in-out">
+          <h1 className="text-2xl font-bold mt-8">Nurse Assistant</h1>
+          {/* Center Persona */}
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <Persona
+              className="size-96"
+              state={
+                isSpeaking ? "speaking" : isListening ? "listening" : "idle"
+              }
+              variant="opal"
+            />
+            <p className="text-lg text-muted-foreground h-0 overflow-visible mt-4">
+              {(isListening ||
+                (isConnected && !isMicMuted && messages.length === 0)) && (
+                <span className="animate-pulse">Listening...</span>
               )}
-              {isSpeaking && (
-                <div className="flex justify-start">
-                  <div className="bg-muted rounded-2xl px-4 py-3">
-                    <p className="text-sm text-muted-foreground">Speaking...</p>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+            </p>
           </div>
 
-          {/* Input Area - Fixed to chat area bottom */}
-          <div className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <div className="max-w-4xl mx-auto px-6 py-4">
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <Textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="Type a message or speak..."
-                    disabled={isLoading}
-                    className="min-h-[60px] max-h-[200px] resize-none"
-                    rows={1}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  {!isConnected && (
+          {/* Control Buttons and Input */}
+          <div className="p-6 flex flex-col gap-2 justify-center items-center w-full max-w-2xl">
+            <div className="flex gap-3 w-full items-end">
+              {/* Text Input Container */}
+              <div className="flex-1 bg-background rounded-2xl border border-sidebar-border">
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder={
+                    isLimitReached
+                      ? "Conversation limit reached"
+                      : "Type a message or speak..."
+                  }
+                  disabled={isLoading || isLimitReached}
+                  className="min-h-15 max-h-50 resize-none border-0 outline-0 p-4 bg-transparent w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  rows={1}
+                />
+                <div className="flex gap-2 px-4 pb-4 justify-end items-center">
+                  {/* Token Usage Pie Chart - Only show when there are messages */}
+                  {messages.length > 0 && (
+                    <div
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                      title={`${tokenCount.toLocaleString()} / ${contextLimit.toLocaleString()} tokens`}
+                    >
+                      <svg className="h-5 w-5 -rotate-90" viewBox="0 0 20 20">
+                        <circle
+                          cx="10"
+                          cy="10"
+                          r="8"
+                          fill="transparent"
+                          className="stroke-muted"
+                          strokeWidth="3"
+                        />
+                        <circle
+                          cx="10"
+                          cy="10"
+                          r="8"
+                          fill="transparent"
+                          className={cn(
+                            "transition-all duration-300",
+                            usagePercentage >= 100
+                              ? "stroke-red-500"
+                              : usagePercentage > 90
+                                ? "stroke-red-500"
+                                : usagePercentage > 70
+                                  ? "stroke-yellow-500"
+                                  : "stroke-primary",
+                          )}
+                          strokeWidth="3"
+                          strokeDasharray={`${(usagePercentage / 100) * 50.27} 50.27`}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span
+                        className={cn(
+                          isLimitReached && "text-red-500 font-medium",
+                        )}
+                      >
+                        {usagePercentage.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  {!isConnected && !isLimitReached && (
                     <Button
                       onClick={() => connect(false)}
                       variant="outline"
                       size="icon"
-                      className="h-[60px] w-[60px]"
+                      className="h-10 w-10"
                       disabled={isLoading}
                       title="Connect voice"
                     >
@@ -604,75 +774,142 @@ export default function Client(props: {
                   )}
                   <Button
                     onClick={sendTextMessage}
-                    disabled={isLoading || !inputText.trim()}
+                    disabled={isLoading || !inputText.trim() || isLimitReached}
                     size="icon"
-                    className="h-[60px] w-[60px]"
+                    className="h-10 w-10"
                     title="Send message"
                   >
                     <Send className="h-5 w-5" />
                   </Button>
                 </div>
               </div>
+
+              {/* Mute Buttons - Only show when connected */}
+              {isConnected && (
+                <div className="flex flex-col gap-2 h-full">
+                  <Button
+                    onClick={toggleMicMute}
+                    variant={isMicMuted ? "destructive" : "outline"}
+                    size="icon"
+                    className="flex-1 w-15 h-15 aspect-square rounded-full"
+                    title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
+                  >
+                    {isMicMuted ? (
+                      <MicOff className="h-5 w-5" />
+                    ) : (
+                      <Mic className="h-5 w-5" />
+                    )}
+                  </Button>
+                  <Button
+                    onClick={toggleSpeakerMute}
+                    variant={isSpeakerMuted ? "destructive" : "outline"}
+                    size="icon"
+                    className="flex-1 w-15 h-15 aspect-square rounded-full"
+                    title={isSpeakerMuted ? "Unmute sound" : "Mute sound"}
+                  >
+                    {isSpeakerMuted ? (
+                      <VolumeX className="h-5 w-5" />
+                    ) : (
+                      <Volume2 className="h-5 w-5" />
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
+            {/* Limit Reached Error Message */}
+            {isLimitReached && (
+              <p className="text-sm text-red-500 text-center">
+                Conversation limit reached, please create a new thread to
+                continue
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Voice Session Panel */}
-        {isConnected && (
-          <div className="w-1/2 flex flex-col bg-muted/30">
-            {/* Center Circle */}
-            <div className="flex-1 flex items-center justify-center">
-              <div
-                className={`w-32 h-32 rounded-full border-4 transition-all ${
-                  isSpeaking
-                    ? "bg-primary/20 border-primary animate-pulse"
-                    : "bg-background border-muted-foreground/30"
-                }`}
-              />
-            </div>
-
-            {/* Control Buttons */}
-            <div className="p-6 flex gap-3 justify-center border-t">
-              <Button
-                onClick={toggleMicMute}
-                variant={isMicMuted ? "destructive" : "outline"}
-                size="lg"
-                className="flex-1 max-w-[150px]"
-                title={isMicMuted ? "Unmute microphone" : "Mute microphone"}
-              >
-                {isMicMuted ? (
-                  <MicOff className="h-5 w-5 mr-2" />
+        {/* Chatbox - Slides in from right */}
+        <div
+          className={cn(
+            "h-full bg-background/80 backdrop-blur-2xl border  border-sidebar-border transition-all duration-300 ease-in-out overflow-hidden rounded-2xl",
+            showChatbox ? "w-100" : "w-0",
+          )}
+        >
+          <div className="flex flex-col h-full w-full">
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="max-w-4xl mx-auto space-y-6">
+                {messages.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-12">
+                    <p className="text-lg mb-2">No messages yet</p>
+                    <p className="text-sm">
+                      {isConnected
+                        ? "Start speaking or type a message below"
+                        : "Connect to start a conversation"}
+                    </p>
+                  </div>
                 ) : (
-                  <Mic className="h-5 w-5 mr-2" />
+                  messages.map((msg, idx) => {
+                    const isStreaming =
+                      streamingMessageRef.current?.itemId === msg.id;
+                    const referencedContexts = findReferencedContexts(
+                      msg.content,
+                    );
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[90%] rounded-2xl px-4 py-3 ${
+                            msg.role === "user"
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted"
+                          } ${isStreaming ? "animate-pulse" : ""}`}
+                        >
+                          <p
+                            className={`text-sm whitespace-pre-wrap ${isStreaming ? "animate-in fade-in duration-300" : ""}`}
+                          >
+                            {msg.content}
+                          </p>
+                          {referencedContexts.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {referencedContexts.map((context) => (
+                                <Badge
+                                  asChild
+                                  key={context.id}
+                                  variant={"link"}
+                                  className="underline"
+                                >
+                                  <Link
+                                    href={`/files/${context.filePath}`}
+                                    target="_blank"
+                                  >
+                                    📄 {context.name}
+                                  </Link>
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                          <p className="text-xs opacity-70 mt-1">
+                            {msg.timestamp.toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
-                {isMicMuted ? "Unmute Mic" : "Mute Mic"}
-              </Button>
-              <Button
-                onClick={toggleSpeakerMute}
-                variant={isSpeakerMuted ? "destructive" : "outline"}
-                size="lg"
-                className="flex-1 max-w-[150px]"
-                title={isSpeakerMuted ? "Unmute sound" : "Mute sound"}
-              >
-                {isSpeakerMuted ? (
-                  <VolumeX className="h-5 w-5 mr-2" />
-                ) : (
-                  <Volume2 className="h-5 w-5 mr-2" />
+                {isSpeaking && (
+                  <div className="flex justify-start">
+                    <div className="bg-muted rounded-2xl px-4 py-3">
+                      <p className="text-sm text-muted-foreground">
+                        Speaking...
+                      </p>
+                    </div>
+                  </div>
                 )}
-                {isSpeakerMuted ? "Unmute Sound" : "Mute Sound"}
-              </Button>
-              <Button
-                onClick={disconnect}
-                variant="destructive"
-                size="lg"
-                className="flex-1 max-w-[150px]"
-                title="End session"
-              >
-                End Session
-              </Button>
+                <div ref={messagesEndRef} />
+              </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

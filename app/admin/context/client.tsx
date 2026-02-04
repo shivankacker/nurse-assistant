@@ -62,7 +62,7 @@ export default function Client(props: { context: ContextSerialized[] }) {
       name: "",
       text: "",
       filePath: "",
-    } as ContextCreatePayload,
+    } satisfies ContextCreatePayload,
     validators: {
       onSubmit: contextCreateSchema,
     },
@@ -147,7 +147,7 @@ export default function Client(props: { context: ContextSerialized[] }) {
                       field.state.meta.isTouched && !field.state.meta.isValid;
                     return (
                       <Field data-invalid={isInvalid}>
-                        <FieldLabel htmlFor={field.name}>File Path</FieldLabel>
+                        <FieldLabel htmlFor={field.name}>File URL</FieldLabel>
                         <Input
                           id={field.name}
                           name={field.name}
@@ -155,7 +155,7 @@ export default function Client(props: { context: ContextSerialized[] }) {
                           onBlur={field.handleBlur}
                           onChange={(e) => field.handleChange(e.target.value)}
                           aria-invalid={isInvalid}
-                          placeholder="File path"
+                          placeholder="Enter file URL"
                           autoComplete="off"
                         />
                         {isInvalid && (
