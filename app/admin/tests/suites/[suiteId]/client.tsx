@@ -46,11 +46,14 @@ import {
 import { PromptSerialized } from "@/utils/schemas/project";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { PlayIcon } from "lucide-react";
+import { PlayIcon, Volume2Icon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+
+type QuestionInputMode = "text" | "audio";
 
 export default function Client(props: {
   suite: TestSuiteSerialized;
@@ -59,6 +62,8 @@ export default function Client(props: {
   const { suite: serverSuite, contexts } = props;
   const router = useRouter();
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
+  const [createQuestionMode, setCreateQuestionMode] =
+    useState<QuestionInputMode>("text");
 
   const suiteQuery = useQuery({
     queryKey: ["suites", serverSuite.id],
@@ -538,7 +543,31 @@ export default function Client(props: {
         {suite.testCases.map((testCase) => (
           <Card key={testCase.id}>
             <CardHeader>
-              <CardTitle>Q : {testCase.questionText}</CardTitle>
+              <div className="flex items-center gap-2">
+                {testCase.questionAudioPath && (
+                  <Badge
+                    variant="secondary"
+                    className="flex items-center gap-1"
+                  >
+                    <Volume2Icon className="h-3 w-3" />
+                    Audio
+                  </Badge>
+                )}
+                <CardTitle className="flex-1">
+                  Q : {testCase.questionText || "Audio Question"}
+                </CardTitle>
+              </div>
+              {testCase.questionAudioPath && (
+                <div className="mt-2">
+                  <audio
+                    controls
+                    className="w-full max-w-md h-10"
+                    src={"/audio_files/" + testCase.questionAudioPath}
+                  >
+                    Your browser does not support the audio element.
+                  </audio>
+                </div>
+              )}
               <CardDescription>A : {testCase.expectedAnswer}</CardDescription>
               <CardAction>
                 <Sheet
@@ -597,33 +626,80 @@ export default function Client(props: {
               }}
             >
               <FieldGroup className="px-4">
-                <createCaseForm.Field
-                  name="questionText"
-                  children={(field) => {
-                    const isInvalid =
-                      field.state.meta.isTouched && !field.state.meta.isValid;
-                    return (
-                      <Field data-invalid={isInvalid}>
-                        <FieldLabel htmlFor={field.name}>
-                          Question Text
-                        </FieldLabel>
-                        <Input
-                          id={field.name}
-                          name={field.name}
-                          value={field.state.value}
-                          onBlur={field.handleBlur}
-                          onChange={(e) => field.handleChange(e.target.value)}
-                          aria-invalid={isInvalid}
-                          placeholder="Enter question text"
-                          autoComplete="off"
-                        />
-                        {isInvalid && (
-                          <FieldError errors={field.state.meta.errors} />
-                        )}
-                      </Field>
-                    );
-                  }}
-                />
+                <Field>
+                  <FieldLabel>Question Input Type</FieldLabel>
+                  <Select
+                    value={createQuestionMode}
+                    onValueChange={(value) =>
+                      setCreateQuestionMode(value as QuestionInputMode)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select input type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Text</SelectItem>
+                      <SelectItem value="audio">Audio URL</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {createQuestionMode === "text" ? (
+                  <createCaseForm.Field
+                    name="questionText"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>
+                            Question Text
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            aria-invalid={isInvalid}
+                            placeholder="Enter question text"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                ) : (
+                  <createCaseForm.Field
+                    name="questionAudioPath"
+                    children={(field) => {
+                      const isInvalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid;
+                      return (
+                        <Field data-invalid={isInvalid}>
+                          <FieldLabel htmlFor={field.name}>
+                            Question Audio URL
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                            aria-invalid={isInvalid}
+                            placeholder="Enter audio URL"
+                            autoComplete="off"
+                          />
+                          {isInvalid && (
+                            <FieldError errors={field.state.meta.errors} />
+                          )}
+                        </Field>
+                      );
+                    }}
+                  />
+                )}
                 <createCaseForm.Field
                   name="expectedAnswer"
                   children={(field) => {
@@ -671,14 +747,21 @@ function EditCaseForm({
   onSubmit,
   isPending,
 }: {
-  testCase: { questionText: string | null; expectedAnswer: string };
+  testCase: {
+    questionText: string | null;
+    questionAudioPath: string | null;
+    expectedAnswer: string;
+  };
   onSubmit: (data: TestCaseCreatePayload) => void;
   isPending: boolean;
 }) {
+  const [questionMode, setQuestionMode] = useState<QuestionInputMode>(
+    testCase.questionAudioPath ? "audio" : "text",
+  );
   const editCaseForm = useForm({
     defaultValues: {
       questionText: testCase.questionText || "",
-      questionAudioPath: "",
+      questionAudioPath: testCase.questionAudioPath || "",
       questionImagePath: "",
       expectedAnswer: testCase.expectedAnswer,
     } as TestCaseCreatePayload,
@@ -706,29 +789,74 @@ function EditCaseForm({
       }}
     >
       <FieldGroup className="px-4">
-        <editCaseForm.Field
-          name="questionText"
-          children={(field) => {
-            const isInvalid =
-              field.state.meta.isTouched && !field.state.meta.isValid;
-            return (
-              <Field data-invalid={isInvalid}>
-                <FieldLabel htmlFor={field.name}>Question Text</FieldLabel>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value)}
-                  aria-invalid={isInvalid}
-                  placeholder="Enter question text"
-                  autoComplete="off"
-                />
-                {isInvalid && <FieldError errors={field.state.meta.errors} />}
-              </Field>
-            );
-          }}
-        />
+        <Field>
+          <FieldLabel>Question Input Type</FieldLabel>
+          <Select
+            value={questionMode}
+            onValueChange={(value) =>
+              setQuestionMode(value as QuestionInputMode)
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select input type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="text">Text</SelectItem>
+              <SelectItem value="audio">Audio URL</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        {questionMode === "text" ? (
+          <editCaseForm.Field
+            name="questionText"
+            children={(field) => {
+              const isInvalid =
+                field.state.meta.isTouched && !field.state.meta.isValid;
+              return (
+                <Field data-invalid={isInvalid}>
+                  <FieldLabel htmlFor={field.name}>Question Text</FieldLabel>
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    aria-invalid={isInvalid}
+                    placeholder="Enter question text"
+                    autoComplete="off"
+                  />
+                  {isInvalid && <FieldError errors={field.state.meta.errors} />}
+                </Field>
+              );
+            }}
+          />
+        ) : (
+          <editCaseForm.Field
+            name="questionAudioPath"
+            children={(field) => {
+              const isInvalid =
+                field.state.meta.isTouched && !field.state.meta.isValid;
+              return (
+                <Field data-invalid={isInvalid}>
+                  <FieldLabel htmlFor={field.name}>
+                    Question Audio URL
+                  </FieldLabel>
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                    aria-invalid={isInvalid}
+                    placeholder="Enter audio URL"
+                    autoComplete="off"
+                  />
+                  {isInvalid && <FieldError errors={field.state.meta.errors} />}
+                </Field>
+              );
+            }}
+          />
+        )}
         <editCaseForm.Field
           name="expectedAnswer"
           children={(field) => {
