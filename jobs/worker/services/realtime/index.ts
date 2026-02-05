@@ -12,7 +12,6 @@
 
 import { createRealtimeConnection, RealtimeWebSocket } from "./websocket";
 import { loadAudioFile, chunkAudio, getAudioStats } from "./audio";
-import type { AudioData } from "./audio";
 
 export interface RealtimeGenerateParams {
   /** System prompt / instructions */
@@ -23,6 +22,8 @@ export interface RealtimeGenerateParams {
   questionText?: string | null;
   /** Path to audio file (relative to public/) */
   questionAudioPath?: string | null;
+  /** OpenAI Realtime model id (e.g. "gpt-realtime"). Comes from TestRun.llmModel when running a test. */
+  realtimeModel?: string;
 }
 
 export interface RealtimeGenerateResult {
@@ -51,7 +52,7 @@ export interface RealtimeGenerateResult {
 export async function generateAnswerRealtime(
   params: RealtimeGenerateParams
 ): Promise<RealtimeGenerateResult> {
-  const { prompt, context, questionText, questionAudioPath } = params;
+  const { prompt, context, questionText, questionAudioPath, realtimeModel } = params;
   const startTime = Date.now();
 
   // Determine input type
@@ -69,10 +70,11 @@ export async function generateAnswerRealtime(
   let connection: RealtimeWebSocket | null = null;
 
   try {
-    // Create and configure connection
+    // Create and configure connection (model from test run when provided)
     connection = await createRealtimeConnection({
       instructions: prompt,
       context: context,
+      model: realtimeModel ?? "gpt-realtime",
     });
 
     await connection.configureSession();

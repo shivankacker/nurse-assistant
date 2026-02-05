@@ -13,17 +13,16 @@ export interface RealtimeToken {
 /**
  * Generate an ephemeral token for OpenAI Realtime API
  *
+ * @param model - OpenAI Realtime model id (e.g. "gpt-realtime"). Defaults to "gpt-realtime".
  * @returns Token object with value and expiration
  * @throws Error if API key is missing or token generation fails
  */
-export async function getRealtimeToken(): Promise<RealtimeToken> {
+export async function getRealtimeToken(model: string = "gpt-realtime"): Promise<RealtimeToken> {
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY environment variable is not set");
   }
-
-  const model = process.env.REALTIME_MODEL || "gpt-realtime";
 
   console.log(`[Realtime Token] Generating ephemeral token for model: ${model}`);
 

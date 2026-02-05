@@ -150,6 +150,14 @@ function getQuestionText(testCase: TestCaseData): string {
 }
 
 /**
+ * Get OpenAI Realtime API model id from TestRun.llmModel (e.g. "realtime:gpt-realtime" -> "gpt-realtime").
+ */
+function getRealtimeModelId(llmModel: string): string {
+  const idx = llmModel.indexOf(":");
+  return idx >= 0 ? llmModel.slice(idx + 1) : llmModel;
+}
+
+/**
  * Determine input type for a test case
  */
 function getInputType(testCase: TestCaseData): "text" | "audio" | "none" {
@@ -222,6 +230,8 @@ async function processTestCase(
   let answer: string;
   let questionForScoring: string = questionDisplay;
 
+  const realtimeModelId = getRealtimeModelId(testRun.llmModel);
+
   if (inputType === "audio") {
     console.log(`  [Realtime] Generating answer (audio input)...`);
     const result = await generateAnswerRealtime({
@@ -229,6 +239,7 @@ async function processTestCase(
       context: contextData,
       questionText: testCase.questionText,
       questionAudioPath: testCase.questionAudioPath,
+      realtimeModel: realtimeModelId,
     });
 
     answer = result.answer;
@@ -249,6 +260,7 @@ async function processTestCase(
         context: contextData,
         questionText: testCase.questionText,
         questionAudioPath: null,
+        realtimeModel: realtimeModelId,
       });
       answer = result.answer;
       questionForScoring = testCase.questionText || questionDisplay;

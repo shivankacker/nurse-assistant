@@ -35,21 +35,11 @@ export const LLMS = {
     name: "GPT-5.2",
     textTransport: "vercel",
   },
-} as const satisfies Record<string, LlmConfig>;
-    realtime: false,
-    contextLimit: 400_000,
-  },
-  "openai:gpt-5.2-2025-12-11": {
-    name: "GPT-5.2",
-    realtime: false,
-    contextLimit: 400_000,
-  },
   "openai:gpt-realtime-2025-08-28": {
     name: "GPT Realtime",
-    realtime: true,
-    contextLimit: 32_000,
+    textTransport: "realtime",
   },
-} as const;
+} as const satisfies Record<string, LlmConfig>;
 
 export const PATIENT_INFO = `65-year-old man, with a history of COPD coming in with acute onset of breathlessness. He says he has been coughing past 4 days, and his sputum production has increased in quantity. He is feeling breathless and this has worsened over past 2 days. He does not give any history of admissions to a hospital or ICU with this complaint in the past. He is on a nebulised dose of steroids which he takes twice a day. He can perform his daily activities but feels breathless on walking and must stop to take a breath. He was a smoker in the past but quit 2 years ago. He is hypertensive and takes amlodipine once in the morning.
 

@@ -16,6 +16,8 @@ export interface SessionConfig {
   instructions: string;
   context?: string;
   voice?: string;
+  /** OpenAI Realtime model id (e.g. "gpt-realtime"). Defaults to "gpt-realtime". */
+  model?: string;
 }
 
 export interface RealtimeResponse {
@@ -33,8 +35,8 @@ type RealtimeEvent = {
  * Create a configured WebSocket connection to OpenAI Realtime API
  */
 export async function createRealtimeConnection(config: SessionConfig): Promise<RealtimeWebSocket> {
-  const token = await getRealtimeToken();
-  const model = process.env.REALTIME_MODEL || "gpt-realtime";
+  const model = config.model ?? "gpt-realtime";
+  const token = await getRealtimeToken(model);
   const url = `${REALTIME_API_URL}?model=${model}`;
 
   console.log(`[Realtime WS] Connecting to ${url}`);
