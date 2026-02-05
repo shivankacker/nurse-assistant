@@ -49,7 +49,14 @@ export async function loadAudioFile(audioPath: string): Promise<AudioData> {
   const fullPath = path.join(process.cwd(), "public", normalizedPath);
   console.log(`[Audio] Loading audio file: ${fullPath}`);
 
-  const buffer = await readFile(fullPath);
+  let buffer: Buffer;
+  try {
+    buffer = await readFile(fullPath);
+  } catch (error) {
+    // Avoid leaking absolute filesystem paths to user-facing logs/results.
+    console.error(`[Audio] Failed to load file at ${fullPath}`, error);
+    throw new Error(`Audio file not found: ${normalizedPath}`);
+  }
   const ext = path.extname(normalizedPath).toLowerCase();
 
   let audioData: AudioData;
