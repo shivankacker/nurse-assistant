@@ -93,8 +93,6 @@ export default function Client(props: {
       .join("\n\n")}`;
   }, [props.defaultProject]);
 
-  console.log("Instructions:", instructions);
-
   // Calculate tokens whenever messages or instructions change
   useEffect(() => {
     const calculateTokens = () => {
@@ -243,8 +241,6 @@ export default function Client(props: {
       }
 
       const { token } = await tokenResponse.json();
-
-      console.log(instructions);
 
       // Create the agent
       const agent = new RealtimeAgent({

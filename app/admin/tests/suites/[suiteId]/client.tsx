@@ -324,7 +324,7 @@ export default function Client(props: {
                 Run
               </Button>
             </SheetTrigger>
-            <SheetContent>
+            <SheetContent className="overflow-y-auto">
               <SheetHeader>
                 <SheetTitle>Create Test Run</SheetTitle>
               </SheetHeader>
