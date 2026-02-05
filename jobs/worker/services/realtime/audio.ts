@@ -40,11 +40,17 @@ export interface AudioChunk {
  * @returns Audio data in PCM 16-bit, 24kHz mono format
  */
 export async function loadAudioFile(audioPath: string): Promise<AudioData> {
-  const fullPath = path.join(process.cwd(), "public", audioPath);
+  // Normalize paths coming from UI/DB
+  const normalizedPath = audioPath
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/^public\//, "");
+
+  const fullPath = path.join(process.cwd(), "public", normalizedPath);
   console.log(`[Audio] Loading audio file: ${fullPath}`);
 
   const buffer = await readFile(fullPath);
-  const ext = path.extname(audioPath).toLowerCase();
+  const ext = path.extname(normalizedPath).toLowerCase();
 
   let audioData: AudioData;
 
