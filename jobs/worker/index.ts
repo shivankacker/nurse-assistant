@@ -5,13 +5,18 @@
  * 1. Loading test run data with all relations
  * 2. Status management (PENDING -> RUNNING -> COMPLETED/FAILED)
  * 3. PDF context loading
- * 4. LLM answer generation for each test case
+ * 4. LLM answer generation via Realtime API (text or audio input)
  * 5. Score calculation (BLEU, Cosine, LLM-as-judge)
  * 6. Result persistence
+ *
+ * Uses OpenAI Realtime API for answer generation to match the main
+ * application's behavior, supporting both text and audio questions.
  */
 import prisma from "@/prisma/prisma";
+import { LLMS } from "@/utils/constants";
 import pLimit from "p-limit";
 import { loadContexts } from "./services/pdf";
+import { generateAnswerRealtime } from "./services/realtime";
 import { generateAnswer } from "./services/llm";
 import { calculateScores } from "./services/scoring";
 import type {
@@ -44,7 +49,12 @@ export async function processTestRun(testRunId: string): Promise<void> {
   }
 
   console.log(`[Worker] Suite: ${testRun.suite.name}`);
-  console.log(`[Worker] Model: ${testRun.llmModel}`);
+  const modelConfig = LLMS[testRun.llmModel as keyof typeof LLMS];
+  const selectedTextTransport = modelConfig?.textTransport || "vercel";
+  console.log(
+    `[Worker] Model: ${testRun.llmModel} (text via ${selectedTextTransport}, audio via realtime)`
+  );
+  console.log(`[Worker] Prompt: "${testRun.prompt.slice(0, 50)}..."`);
   console.log(`[Worker] Test cases: ${testRun.suite.testCases.length}`);
   console.log(`[Worker] Contexts: ${testRun.suite.contexts.length}`);
 
@@ -122,20 +132,42 @@ async function fetchTestRunWithRelations(
 }
 
 /**
- * Get the question text from a test case (supports multimodal)
+ * Get the question text from a test case for logging/scoring
+ * Audio questions will be transcribed by the Realtime API
  */
 function getQuestionText(testCase: TestCaseData): string {
-  // For now, prioritize text question. Audio/image support can be added later.
   if (testCase.questionText) {
     return testCase.questionText;
   }
   if (testCase.questionAudioPath) {
-    return `[Audio question: ${testCase.questionAudioPath}]`;
+    // Will be transcribed by Realtime API
+    return `[Audio: ${testCase.questionAudioPath}]`;
   }
   if (testCase.questionImagePath) {
-    return `[Image question: ${testCase.questionImagePath}]`;
+    return `[Image: ${testCase.questionImagePath}]`;
   }
   return "[No question provided]";
+}
+
+/**
+ * Get OpenAI Realtime API model id from TestRun.llmModel (e.g. "realtime:gpt-realtime" -> "gpt-realtime").
+ */
+function getRealtimeModelId(llmModel: string): string {
+  const idx = llmModel.indexOf(":");
+  return idx >= 0 ? llmModel.slice(idx + 1) : llmModel;
+}
+
+/**
+ * Determine input type for a test case
+ */
+function getInputType(testCase: TestCaseData): "text" | "audio" | "none" {
+  if (testCase.questionAudioPath && testCase.questionAudioPath.trim() !== "") {
+    return "audio";
+  }
+  if (testCase.questionText && testCase.questionText.trim() !== "") {
+    return "text";
+  }
+  return "none";
 }
 
 /**
@@ -175,35 +207,93 @@ async function processTestCaseSafe(
 }
 
 /**
- * Process a single test case
+ * Process a single test case using Realtime API
+ *
+ * Supports both text and audio questions, matching the main app's behavior.
  */
 async function processTestCase(
   testRun: TestRunWithRelations,
   testCase: TestCaseData,
   contextData: string
 ): Promise<TestRunResultInput> {
-  const questionText = getQuestionText(testCase);
+  const inputType = getInputType(testCase);
+  const questionDisplay = getQuestionText(testCase);
 
-  // 1. Generate LLM answer
-  console.log(`  [LLM] Generating answer...`);
-  const answer = await generateAnswer({
-    model: testRun.llmModel,
-    prompt: testRun.prompt,
-    question: questionText,
-    context: contextData,
-    temperature: testRun.temperature,
-    topP: testRun.topP,
-    topK: testRun.topK,
-  });
+  if (inputType === "none") {
+    throw new Error("Test case has no question (text or audio)");
+  }
 
-  console.log(`  [LLM] Answer generated: ${answer.length} chars`);
+  // 1. Generate answer (audio always via Realtime; text via Realtime only when selected)
+  const modelConfig = LLMS[testRun.llmModel as keyof typeof LLMS];
+  const selectedTextTransport = modelConfig?.textTransport || "vercel";
+
+  let answer: string;
+  let questionForScoring: string = questionDisplay;
+
+  const realtimeModelId = getRealtimeModelId(testRun.llmModel);
+
+  if (inputType === "audio") {
+    console.log(`  [Realtime] Generating answer (audio input)...`);
+    const result = await generateAnswerRealtime({
+      prompt: testRun.prompt,
+      context: contextData,
+      questionText: testCase.questionText,
+      questionAudioPath: testCase.questionAudioPath,
+      realtimeModel: realtimeModelId,
+    });
+
+    answer = result.answer;
+    // For audio input, use the transcription as the question text for scoring
+    questionForScoring = result.inputTranscript || questionDisplay;
+
+    console.log(
+      `  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`
+    );
+    if (result.inputTranscript) {
+      console.log(`  [Realtime] Audio transcribed: "${result.inputTranscript.slice(0, 50)}..."`);
+    }
+  } else {
+    if (selectedTextTransport === "realtime") {
+      console.log(`  [Realtime] Generating answer (text input)...`);
+      const result = await generateAnswerRealtime({
+        prompt: testRun.prompt,
+        context: contextData,
+        questionText: testCase.questionText,
+        questionAudioPath: null,
+        realtimeModel: realtimeModelId,
+      });
+      answer = result.answer;
+      questionForScoring = testCase.questionText || questionDisplay;
+      console.log(
+        `  [Realtime] Answer generated: ${answer.length} chars in ${result.durationMs}ms`
+      );
+    } else {
+      if (!testCase.questionText || !testCase.questionText.trim()) {
+        throw new Error("Text test case is missing questionText");
+      }
+
+      console.log(`  [Vercel AI] Generating answer (text input)...`);
+      const start = Date.now();
+      answer = await generateAnswer({
+        model: testRun.llmModel,
+        prompt: testRun.prompt,
+        question: testCase.questionText,
+        context: contextData,
+        temperature: testRun.temperature,
+        topP: testRun.topP,
+        topK: testRun.topK,
+      });
+      questionForScoring = testCase.questionText;
+      console.log(`  [Vercel AI] Answer generated: ${answer.length} chars in ${Date.now() - start}ms`);
+    }
+  }
 
   // 2. Calculate all scores
   console.log(`  [Scoring] Calculating scores...`);
   const scores = await calculateScores({
     generatedAnswer: answer,
     expectedAnswer: testCase.expectedAnswer,
-    question: questionText,
+    question: questionForScoring,
     model: testRun.llmModel,
   });
 

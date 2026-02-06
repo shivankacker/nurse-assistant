@@ -30,9 +30,9 @@ export async function POST(req: NextRequest) {
           session: {
             type: "realtime",
             model:
-              Object.keys(LLMS)
-                .find((key) => LLMS[key as keyof typeof LLMS].realtime)
-                ?.split(":")[1] || "NA",
+              Object.keys(LLMS).find(
+                (key) => LLMS[key as keyof typeof LLMS].textTransport === "realtime"
+              )?.split(":")[1] || "gpt-realtime",
           },
         }),
       },
